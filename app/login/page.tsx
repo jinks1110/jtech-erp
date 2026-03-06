@@ -1,17 +1,24 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-// 경로 에러 발생 시 '../../lib/supabase' 로 변경하십시오. (Next.js 기본 alias 사용)
 import { supabase } from '@/lib/supabase'; 
 
-// 제이테크 ERP 로그인 페이지 (모바일 반응형 완벽 지원)
+// 제이테크 ERP 로그인 페이지 (모바일 반응형 및 자동 로그아웃 파기 기능 적용)
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const router = useRouter();
+
+  // 신규 추가: 로그인 페이지에 접속하면 무조건 기존 세션(열쇠)을 파기함 (확실한 로그아웃)
+  useEffect(() => {
+    const clearSession = async () => {
+      await supabase.auth.signOut();
+    };
+    clearSession();
+  }, []);
 
   // 빌드 에러 및 런타임 에러 방지를 위한 비동기 예외 처리
   const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -36,8 +43,8 @@ export default function LoginPage() {
       }
 
       if (data.user) {
-        // 로그인 성공 시 명세서 메인 화면으로 이동
-        router.push('/invoice');
+        // 로그인 성공 시 대문 화면으로 이동
+        router.push('/');
       }
     } catch (error: any) {
       console.error('로그인 에러:', error.message);
