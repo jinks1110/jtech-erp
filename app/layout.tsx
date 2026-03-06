@@ -2,19 +2,20 @@ import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css';
 import Link from 'next/link';
+import AuthProvider from './AuthProvider'; // 신규 추가: 보안 가드 불러오기
 
 const inter = Inter({ subsets: ['latin'] });
 
-// PWA 및 앱 메타데이터 설정
+// PWA 및 앱 메타데이터 설정 (기존 유지)
 export const metadata: Metadata = {
   title: 'J-TECH ERP',
   description: '제이테크 실무용 통합 관리 시스템',
-  manifest: '/manifest.json', // 모바일 앱 설치를 위한 매니페스트 연결
-  themeColor: '#2563eb', // 브라우저 상단 탭 색상을 J-TECH 블루로 통일
-  viewport: 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0', // 모바일에서 화면 확대 방지 (앱처럼 보이게 함)
+  manifest: '/manifest.json',
+  themeColor: '#2563eb',
+  viewport: 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0',
 };
 
-// 모바일 및 PC 반응형 네비게이션 메뉴 컴포넌트
+// 모바일 및 PC 반응형 네비게이션 메뉴 컴포넌트 (기존 유지)
 function NavigationBar() {
   return (
     <nav className="bg-blue-700 text-white shadow-md print:hidden">
@@ -67,7 +68,7 @@ function NavigationBar() {
   );
 }
 
-// 기존 페이지들을 감싸는 메인 레이아웃 (기존 기능 100% 유지)
+// 기존 페이지들을 감싸는 메인 레이아웃
 export default function RootLayout({
   children,
 }: {
@@ -76,13 +77,16 @@ export default function RootLayout({
   return (
     <html lang="ko">
       <body className={`${inter.className} bg-gray-50 pb-16 md:pb-0`}>
-        {/* 상단/하단 네비게이션 메뉴 */}
-        <NavigationBar />
-        
-        {/* 각 페이지의 실제 콘텐츠가 렌더링되는 영역 */}
-        <main className="w-full">
-          {children}
-        </main>
+        {/* 신규 추가: 건물 전체를 AuthProvider로 감싸서 로그인 안 한 사람은 접근 불가 처리 */}
+        <AuthProvider>
+          {/* 상단/하단 네비게이션 메뉴 */}
+          <NavigationBar />
+          
+          {/* 각 페이지의 실제 콘텐츠가 렌더링되는 영역 */}
+          <main className="w-full">
+            {children}
+          </main>
+        </AuthProvider>
       </body>
     </html>
   );
