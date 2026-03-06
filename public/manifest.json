@@ -1,0 +1,18 @@
+{
+  "name": "J-TECH ERP",
+  "short_name": "J-TECH",
+  "description": "제이테크 거래명세표 및 매출 관리 시스템",
+  "start_url": "/invoice",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#2563eb",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/6008/6008986.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
