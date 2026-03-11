@@ -4,11 +4,10 @@ import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
-// 모바일 및 PC 반응형 네비게이션 메뉴 컴포넌트 (로그인 화면 숨김 기능 완벽 적용)
+// 모바일 및 PC 반응형 네비게이션 메뉴 (로고 홈 링크 수정 완료)
 export default function NavigationBar() {
   const pathname = usePathname();
 
-  // 현재 주소가 로그인 페이지('/login')라면, 네비게이션 바를 아예 화면에 그리지 않고 종료합니다.
   if (pathname === '/login') {
     return null;
   }
@@ -18,11 +17,12 @@ export default function NavigationBar() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           <div className="flex items-center">
-            {/* 로고 영역 */}
-            <Link href="/invoice" className="flex-shrink-0 font-extrabold text-xl tracking-wider">
+            {/* 로고 영역: 클릭 시 메인 대시보드('/')로 이동하도록 완벽 수정 */}
+            <Link href="/" className="flex-shrink-0 font-extrabold text-xl tracking-wider hover:text-blue-200 transition">
               J-TECH
             </Link>
-            {/* PC 및 태블릿(폴드 펼친 화면) 메뉴 */}
+            
+            {/* PC 및 태블릿 메뉴 */}
             <div className="hidden md:block">
               <div className="ml-10 flex items-baseline space-x-4">
                 <Link href="/invoice" className="hover:bg-blue-600 px-3 py-2 rounded-md text-sm font-medium transition">명세서 작성</Link>
@@ -32,7 +32,7 @@ export default function NavigationBar() {
               </div>
             </div>
           </div>
-          {/* 우측 상단 유저 컨트롤 (로그아웃 기능) */}
+          {/* 우측 상단 유저 컨트롤 */}
           <div className="hidden md:block">
             <Link href="/login" className="bg-blue-800 hover:bg-blue-900 px-3 py-2 rounded-md text-sm font-medium transition">
               로그아웃
@@ -41,7 +41,7 @@ export default function NavigationBar() {
         </div>
       </div>
 
-      {/* 모바일(스마트폰) 전용 하단 고정 탭 바 (앱 스타일) */}
+      {/* 모바일 하단 고정 탭 바 */}
       <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-50 flex justify-around items-center h-16 text-xs text-gray-600 shadow-[0_-2px_10px_rgba(0,0,0,0.05)]">
         <Link href="/invoice" className="flex flex-col items-center justify-center w-full h-full hover:text-blue-600 hover:bg-gray-50">
           <span className="text-xl mb-1">📝</span>
