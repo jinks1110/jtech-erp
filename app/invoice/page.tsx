@@ -3,7 +3,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 
-// 타입 지정 (빌드 에러 방지)
 interface Client {
   id: string;
   name: string;
@@ -26,33 +25,59 @@ interface InvoiceItem {
   is_vat_included: boolean;
 }
 
-// 제이테크 명세서 프로그램 (DB 연동, 자동 계산 및 invoice_no 오류 해결)
 export default function InvoicePage() {
-  // DB에서 불러올 데이터 상태
   const [clients, setClients] = useState<Client[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   
-  // 폼 입력 상태
   const [selectedClientId, setSelectedClientId] = useState('');
   const [items, setItems] = useState<InvoiceItem[]>([{ product_id: '', name: '', spec: '', qty: 0, price: 0, is_vat_included: false }]);
   const [isSaving, setIsSaving] = useState(false);
 
-  // 1. 거래처 및 품목 데이터 불러오기
   useEffect(() => {
     const fetchData = async () => {
-      const { data: clientsData } = await supabase.from('clients').select('id, name').order('created_at', { ascending: false });
-      const { data: productsData } = await supabase.from('products').select('*').order('created_at', { ascending: false });
-      
-      if (clientsData) setClients(clientsData);
-      if (productsData) setProducts(productsData);
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) return;
+
+        // TS 문법 오류 해결: data의 타입을 명확히 지정하여 의심을 없앰
+        const { data, error: profileError } = await supabase
+          .from('profiles')
+          .select('company_id')
+          .eq('id', session.user.id)
+          .single();
+          
+        const profile = data as { company_id: string } | null;
+
+        if (profileError || !profile) {
+          console.error("프로필 정보 없음:", profileError);
+          return;
+        }
+
+        const { data: clientsData } = await supabase
+          .from('clients')
+          .select('id, name')
+          .eq('company_id', profile.company_id)
+          .eq('is_active', true) 
+          .order('name', { ascending: true });
+          
+        const { data: productsData } = await supabase
+          .from('products')
+          .select('*')
+          .eq('company_id', profile.company_id)
+          .eq('is_active', true)
+          .order('name', { ascending: true });
+        
+        if (clientsData) setClients(clientsData);
+        if (productsData) setProducts(productsData);
+      } catch (error) {
+        console.error("데이터 로드 실패:", error);
+      }
     };
     fetchData();
   }, []);
 
-  // 기존 기능 유지: 품목 추가
   const addItem = () => setItems([...items, { product_id: '', name: '', spec: '', qty: 0, price: 0, is_vat_included: false }]);
 
-  // 품목 선택 시 단가 및 정보 자동 입력
   const handleProductSelect = (index: number, productId: string) => {
     const selectedProduct = products.find(p => p.id === productId);
     const newItems = [...items];
@@ -62,7 +87,7 @@ export default function InvoicePage() {
         product_id: selectedProduct.id,
         name: selectedProduct.name,
         spec: selectedProduct.spec || '',
-        qty: 1, // 기본 수량 1
+        qty: 1,
         price: selectedProduct.price,
         is_vat_included: selectedProduct.is_vat_included
       };
@@ -72,26 +97,22 @@ export default function InvoicePage() {
     setItems(newItems);
   };
 
-  // 기존 기능 유지 + 신규 추가: 빌드 에러 방지용 안전한 인쇄 기능
   const handlePrint = () => {
     if (typeof window !== 'undefined') {
       window.print();
     }
   };
 
-  // 계산 로직: 공급가액, 부가세, 총합 자동 계산
   let supplyTotal = 0;
   let vatTotal = 0;
 
   items.forEach(item => {
     const lineTotal = item.qty * item.price;
     if (item.is_vat_included) {
-      // 부가세 포함 단가인 경우: 공급가액 = 총액 / 1.1, 부가세 = 총액 - 공급가액
       const supply = Math.round(lineTotal / 1.1);
       supplyTotal += supply;
       vatTotal += (lineTotal - supply);
     } else {
-      // 부가세 별도 단가인 경우: 공급가액 = 총액, 부가세 = 공급가액 * 0.1
       supplyTotal += lineTotal;
       vatTotal += Math.round(lineTotal * 0.1);
     }
@@ -99,7 +120,6 @@ export default function InvoicePage() {
 
   const grandTotal = supplyTotal + vatTotal;
 
-  // DB에 거래명세표 저장 기능 (invoice_no 자동 생성 추가)
   const handleSave = async () => {
     if (!selectedClientId) {
       alert('거래처를 선택해주세요.');
@@ -113,22 +133,34 @@ export default function InvoicePage() {
     try {
       setIsSaving(true);
       
-      // 본사(제이테크) ID 가져오기
-      const { data: companyData, error: companyError } = await supabase.from('companies').select('id').limit(1).single();
-      if (companyError || !companyData) throw new Error('본사 정보 오류');
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('로그인 세션 만료');
 
-      // 실무용 명세서 번호 자동 생성 (예: INV-20260307-1234)
+      // TS 문법 오류 해결: 저장할 때도 profile의 타입을 명확하게 지정
+      const { data, error: profileError } = await supabase
+        .from('profiles')
+        .select('company_id')
+        .eq('id', session.user.id)
+        .single();
+        
+      const profile = data as { company_id: string } | null;
+
+      if (profileError || !profile) {
+        alert("저장 오류: 소속된 회사(company_id) 정보를 찾을 수 없습니다.");
+        setIsSaving(false);
+        return;
+      }
+
       const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
       const randomStr = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
       const generatedInvoiceNo = `INV-${dateStr}-${randomStr}`;
 
-      // 1. invoices 테이블에 저장 (invoice_no 컬럼 데이터 추가)
       const { data: invoiceData, error: invoiceError } = await supabase
         .from('invoices')
         .insert([{
-          company_id: companyData.id,
+          company_id: profile.company_id, // 이제 여기서 빨간 줄이 절대 뜨지 않습니다!
           client_id: selectedClientId,
-          invoice_no: generatedInvoiceNo, // <-- 오류 해결: 명세서 번호 추가
+          invoice_no: generatedInvoiceNo,
           supply_amount: supplyTotal,
           vat_amount: vatTotal,
           total_amount: grandTotal
@@ -138,7 +170,6 @@ export default function InvoicePage() {
 
       if (invoiceError) throw invoiceError;
 
-      // 2. invoice_items 테이블에 상세 내역 저장
       const itemsToInsert = items.map(item => ({
         invoice_id: invoiceData.id,
         product_id: item.product_id,
@@ -152,14 +183,12 @@ export default function InvoicePage() {
       
       if (itemsError) throw itemsError;
 
-      alert('거래명세표가 성공적으로 저장되었습니다. (명세서 번호: ' + generatedInvoiceNo + ')');
-      // 폼 초기화
+      alert('거래명세표가 성공적으로 저장되었습니다. (번호: ' + generatedInvoiceNo + ')');
       setSelectedClientId('');
       setItems([{ product_id: '', name: '', spec: '', qty: 0, price: 0, is_vat_included: false }]);
 
     } catch (error: any) {
-      console.error('명세서 저장 에러:', error.message);
-      alert('저장에 실패했습니다.');
+      alert('저장에 실패했습니다. ' + error.message);
     } finally {
       setIsSaving(false);
     }
@@ -170,30 +199,28 @@ export default function InvoicePage() {
       <div className="max-w-4xl mx-auto bg-white p-6 shadow-lg rounded-lg" id="invoice-area">
         <h1 className="text-2xl font-bold mb-6 border-b pb-2">J-TECH 명세서 시스템</h1>
         
-        {/* 거래처 정보 (기존 폼 유지 및 셀렉트 박스로 업그레이드) */}
         <div className="mb-6">
           <label className="block text-sm font-medium mb-1">거래처명</label>
           <select 
-            className="w-full border rounded p-2 outline-none focus:border-blue-500" 
+            className="w-full border rounded p-2 outline-none focus:border-blue-500 bg-white" 
             value={selectedClientId} 
             onChange={(e) => setSelectedClientId(e.target.value)}
           >
-            <option value="">거래처를 선택하세요</option>
+            <option value="">거래처를 선택하세요 (비활성 숨김 상태)</option>
             {clients.map(client => (
               <option key={client.id} value={client.id}>{client.name}</option>
             ))}
           </select>
         </div>
 
-        {/* 품목 리스트 (기존 폼 유지 및 DB 연동) */}
         <div className="overflow-x-auto">
           <table className="w-full mb-4 border-collapse min-w-[600px]">
             <thead>
               <tr className="bg-gray-100 text-left text-sm">
-                <th className="p-2 border">품목 선택</th>
-                <th className="p-2 border">수량</th>
-                <th className="p-2 border">단가</th>
-                <th className="p-2 border text-right">합계</th>
+                <th className="p-2 border">품목 선택 (비활성 숨김)</th>
+                <th className="p-2 border w-24">수량</th>
+                <th className="p-2 border w-32 text-right">단가</th>
+                <th className="p-2 border w-32 text-right">합계</th>
               </tr>
             </thead>
             <tbody>
@@ -213,7 +240,7 @@ export default function InvoicePage() {
                   </td>
                   <td className="border p-2">
                     <input type="number" className="w-full outline-none text-right" 
-                      value={item.qty || ''}
+                      value={item.qty === 0 ? '' : item.qty}
                       onChange={(e) => {
                         const newItems = [...items];
                         newItems[idx].qty = Number(e.target.value);
@@ -224,9 +251,8 @@ export default function InvoicePage() {
                   </td>
                   <td className="border p-2">
                     <input type="number" className="w-full outline-none text-right bg-gray-50" 
-                      value={item.price || ''}
+                      value={item.price === 0 ? '' : item.price}
                       readOnly
-                      title="단가는 품목 관리에서 수정 가능합니다."
                     />
                   </td>
                   <td className="border p-2 text-right font-medium">
@@ -238,7 +264,6 @@ export default function InvoicePage() {
           </table>
         </div>
 
-        {/* 버튼 영역: 기존 폼 유지 및 저장 버튼 추가 */}
         <div className="flex justify-between items-center mb-6 print:hidden border-b pb-6">
           <button onClick={addItem} className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 transition text-sm">
             + 품목 줄 추가
@@ -248,13 +273,13 @@ export default function InvoicePage() {
             <button onClick={handleSave} disabled={isSaving} className={`px-4 py-2 rounded text-white font-bold transition text-sm ${isSaving ? 'bg-blue-400' : 'bg-blue-600 hover:bg-blue-700'}`}>
               {isSaving ? '저장 중...' : 'DB에 명세서 저장'}
             </button>
+            {/* 여기 인쇄 버튼은 엑셀이나 임시 출력용이므로 그대로 둡니다 */}
             <button onClick={handlePrint} className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition font-bold text-sm">
-              명세서 인쇄 (PDF)
+              화면 인쇄 (임시)
             </button>
           </div>
         </div>
 
-        {/* 총 합계 (기존 폼 유지 및 공급가/부가세 세분화) */}
         <div className="text-right space-y-1">
           <div className="text-gray-600">공급가액: {supplyTotal.toLocaleString()}원</div>
           <div className="text-gray-600">부가세: {vatTotal.toLocaleString()}원</div>

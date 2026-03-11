@@ -5,7 +5,6 @@ import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import * as XLSX from 'xlsx';
 
-// 상세 페이지 전용 타입 정의 (빌드 에러 방지)
 interface InvoiceDetail {
   id: string;
   invoice_no: string;
@@ -27,13 +26,13 @@ interface InvoiceDetail {
 }
 
 interface InvoiceItem {
-  id?: string; // 기존 저장된 아이템은 id가 있음
-  product_id?: string; // 수정을 위해 추가
+  id?: string;
+  product_id?: string;
   name: string;
   spec: string;
   qty: number;
   price: number;
-  is_vat_included?: boolean; // 수정을 위해 추가
+  is_vat_included?: boolean;
 }
 
 interface Product {
@@ -44,7 +43,14 @@ interface Product {
   is_vat_included: boolean;
 }
 
-// 제이테크 거래명세표 상세 조회, 수정 및 출력 시스템
+// === 신규 추가: 첨부파일 타입 ===
+interface Attachment {
+  id: string;
+  file_name: string;
+  file_url: string;
+  file_path: string;
+}
+
 export default function InvoiceDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -55,16 +61,32 @@ export default function InvoiceDetailPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // 수정 모드 관련 상태
   const [isEditing, setIsEditing] = useState(false);
   const [editItems, setEditItems] = useState<InvoiceItem[]>([]);
   const [isUpdating, setIsUpdating] = useState(false);
 
-  // 데이터 불러오기
+  // === 신규 추가: 첨부파일 상태 ===
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+
   const fetchInvoiceDetail = async () => {
     try {
       setLoading(true);
-      // 1. 거래명세표 본문 + 거래처 정보 + 회사 정보 조인 검색
+
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('로그인이 필요합니다.');
+
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('company_id')
+        .eq('id', session.user.id)
+        .single();
+        
+      if (profileError || !profile) {
+        console.error("프로필 정보 없음:", profileError);
+        throw new Error('회사 정보를 불러오는데 실패했습니다.');
+      }
+
       const { data: invData, error: invError } = await supabase
         .from('invoices')
         .select(`
@@ -78,7 +100,6 @@ export default function InvoiceDetailPage() {
       if (invError) throw invError;
       setInvoice(invData as unknown as InvoiceDetail);
 
-      // 2. 거래명세표에 속한 품목 리스트 검색
       const { data: itemsData, error: itemsError } = await supabase
         .from('invoice_items')
         .select('*')
@@ -88,9 +109,25 @@ export default function InvoiceDetailPage() {
       if (itemsError) throw itemsError;
       setItems(itemsData || []);
 
-      // 3. 수정을 위해 전체 품목 마스터 데이터 불러오기
-      const { data: productsData } = await supabase.from('products').select('*');
+      const { data: productsData } = await supabase
+        .from('products')
+        .select('*')
+        .eq('company_id', profile.company_id)
+        .eq('is_active', true)
+        .order('name', { ascending: true });
+        
       if (productsData) setProducts(productsData);
+
+      // === 신규 추가: 첨부파일 목록 불러오기 ===
+      const { data: attachData, error: attachError } = await supabase
+        .from('attachments')
+        .select('*')
+        .eq('invoice_id', invoiceId)
+        .order('created_at', { ascending: false });
+
+      if (!attachError && attachData) {
+        setAttachments(attachData);
+      }
 
     } catch (error: any) {
       console.error('상세 조회 에러:', error.message);
@@ -106,14 +143,12 @@ export default function InvoiceDetailPage() {
     }
   }, [invoiceId]);
 
-  // 기존 폼 유지: PDF 출력 (브라우저 기본 인쇄 기능 활용)
   const handlePrint = () => {
     if (typeof window !== 'undefined') {
       window.print();
     }
   };
 
-  // 기존 폼 유지: 엑셀(.xlsx) 파일 다운로드 기능
   const handleExcelExport = () => {
     if (!invoice || items.length === 0) return;
 
@@ -139,10 +174,9 @@ export default function InvoiceDetailPage() {
     }
   };
 
-  // === 신규 추가: 수정 기능 로직 ===
   const startEditing = () => {
     setIsEditing(true);
-    setEditItems([...items]); // 현재 아이템들을 수정용 상태로 복사
+    setEditItems([...items]); 
   };
 
   const addEditItem = () => {
@@ -182,13 +216,11 @@ export default function InvoiceDetailPage() {
     try {
       setIsUpdating(true);
 
-      // 1. 재계산 로직
       let supplyTotal = 0;
       let vatTotal = 0;
 
       editItems.forEach(item => {
         const lineTotal = item.qty * item.price;
-        // 수정 시 is_vat_included 값이 없으면 별도로 간주 (기존 데이터 호환성)
         if (item.is_vat_included) {
           const supply = Math.round(lineTotal / 1.1);
           supplyTotal += supply;
@@ -200,7 +232,6 @@ export default function InvoiceDetailPage() {
       });
       const grandTotal = supplyTotal + vatTotal;
 
-      // 2. invoices 테이블 업데이트 (금액 갱신)
       const { error: updateError } = await supabase
         .from('invoices')
         .update({
@@ -212,7 +243,6 @@ export default function InvoiceDetailPage() {
 
       if (updateError) throw updateError;
 
-      // 3. 기존 invoice_items 전부 삭제 후 새로 삽입 (가장 안전한 DB 동기화 방식)
       await supabase.from('invoice_items').delete().eq('invoice_id', invoiceId);
 
       const itemsToInsert = editItems.map(item => ({
@@ -229,7 +259,7 @@ export default function InvoiceDetailPage() {
 
       alert('명세서가 성공적으로 수정되었습니다.');
       setIsEditing(false);
-      fetchInvoiceDetail(); // 수정된 데이터로 화면 새로고침
+      fetchInvoiceDetail(); 
 
     } catch (error: any) {
       console.error('수정 에러:', error.message);
@@ -239,13 +269,92 @@ export default function InvoiceDetailPage() {
     }
   };
 
+  // === 신규 추가: 파일 업로드 핸들러 ===
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    try {
+      if (!e.target.files || e.target.files.length === 0) return;
+      const file = e.target.files[0];
+      
+      setIsUploading(true);
+
+      // 1. Storage에 파일 업로드 (이름 충돌 방지를 위해 현재 시간 추가)
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${invoiceId}_${Date.now()}.${fileExt}`;
+      const filePath = `${fileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('attachments')
+        .upload(filePath, file);
+
+      if (uploadError) throw uploadError;
+
+      // 2. 업로드된 파일의 공개 URL 가져오기
+      const { data: urlData } = supabase.storage
+        .from('attachments')
+        .getPublicUrl(filePath);
+
+      // 3. DB 테이블에 기록 저장
+      const { error: dbError } = await supabase
+        .from('attachments')
+        .insert([{
+          invoice_id: invoiceId,
+          file_name: file.name,
+          file_path: filePath,
+          file_url: urlData.publicUrl
+        }]);
+
+      if (dbError) throw dbError;
+
+      // 목록 새로고침
+      fetchInvoiceDetail();
+      alert('파일이 성공적으로 첨부되었습니다.');
+
+    } catch (error: any) {
+      console.error("업로드 에러:", error.message);
+      alert('파일 업로드에 실패했습니다. (Storage 버킷을 생성했는지 확인해주세요.)');
+    } finally {
+      setIsUploading(false);
+      e.target.value = ''; // input 초기화
+    }
+  };
+
+  // === 신규 추가: 파일 삭제 핸들러 ===
+  const handleDeleteFile = async (id: string, filePath: string) => {
+    if (!window.confirm('첨부파일을 삭제하시겠습니까?')) return;
+
+    try {
+      // 1. Storage에서 삭제
+      await supabase.storage.from('attachments').remove([filePath]);
+      // 2. DB에서 삭제
+      const { error } = await supabase.from('attachments').delete().eq('id', id);
+      if (error) throw error;
+
+      fetchInvoiceDetail(); // 목록 새로고침
+    } catch (error: any) {
+      alert('파일 삭제에 실패했습니다.');
+    }
+  };
+
   if (loading) return <div className="p-10 text-center">데이터를 불러오는 중입니다...</div>;
   if (!invoice) return <div className="p-10 text-center">해당 명세서를 찾을 수 없습니다.</div>;
 
   return (
     <div className="p-4 md:p-8 bg-gray-100 min-h-screen text-black print:bg-white print:p-0">
       
-      {/* 상단: 컨트롤 버튼 (인쇄 시 숨김 처리됨) */}
+      <style dangerouslySetInnerHTML={{
+        __html: `
+          @media print {
+            @page { size: A4 portrait; margin: 15mm; }
+            body { -webkit-print-color-adjust: exact; print-color-adjust: exact; background-color: white !important; }
+            table { page-break-inside: auto; }
+            tr    { page-break-inside: avoid; page-break-after: auto; }
+            thead { display: table-header-group; }
+            tfoot { display: table-footer-group; }
+          }
+        `
+      }} />
+
+      {/* 상단: 컨트롤 버튼 */}
       <div className="max-w-4xl mx-auto mb-4 flex justify-between items-center print:hidden bg-white p-4 shadow rounded-lg">
         <button onClick={() => router.back()} className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 transition text-sm">
           ← 목록으로 돌아가기
@@ -253,7 +362,6 @@ export default function InvoiceDetailPage() {
         <div className="space-x-2">
           {!isEditing ? (
             <>
-              {/* 일반 모드 버튼들 */}
               <button onClick={startEditing} className="bg-yellow-500 text-white px-4 py-2 rounded hover:bg-yellow-600 transition font-bold text-sm">
                 내용 수정하기
               </button>
@@ -266,7 +374,6 @@ export default function InvoiceDetailPage() {
             </>
           ) : (
             <>
-              {/* 수정 모드 버튼들 */}
               <button onClick={() => setIsEditing(false)} className="bg-gray-400 text-white px-4 py-2 rounded hover:bg-gray-500 transition font-bold text-sm">
                 수정 취소
               </button>
@@ -278,7 +385,6 @@ export default function InvoiceDetailPage() {
         </div>
       </div>
 
-      {/* === 수정 모드 화면 === */}
       {isEditing ? (
         <div className="max-w-4xl mx-auto bg-white p-8 shadow-lg border-2 border-yellow-400 rounded-lg">
           <h2 className="text-2xl font-bold mb-6 text-yellow-600 border-b pb-2">명세서 내용 수정 (문서번호: {invoice.invoice_no})</h2>
@@ -352,7 +458,6 @@ export default function InvoiceDetailPage() {
           </button>
         </div>
       ) : (
-        /* === 일반 모드 화면 (기존 명세서 인쇄 영역 100% 유지) === */
         <div className="max-w-4xl mx-auto bg-white p-8 shadow-lg print:shadow-none print:max-w-none print:p-0">
           <h1 className="text-3xl font-bold text-center mb-8 tracking-widest underline underline-offset-8 decoration-2">거래명세표</h1>
           
@@ -417,6 +522,55 @@ export default function InvoiceDetailPage() {
           
         </div>
       )}
+
+      {/* === 신규 추가: 첨부파일 관리 영역 (인쇄 시 숨김) === */}
+      {!isEditing && (
+        <div className="max-w-4xl mx-auto mt-6 bg-white p-6 shadow-lg rounded-lg print:hidden border border-gray-200">
+          <div className="flex justify-between items-center mb-4 border-b pb-2">
+            <h3 className="text-lg font-bold flex items-center">
+              <span className="mr-2 text-xl">📎</span> 첨부파일 관리 (도면, 영수증, 문서 등)
+            </h3>
+            
+            {/* 파일 업로드 버튼 */}
+            <label className={`cursor-pointer bg-blue-50 text-blue-700 hover:bg-blue-100 font-bold py-2 px-4 rounded border border-blue-200 transition ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
+              {isUploading ? '업로드 중...' : '+ 파일 추가'}
+              <input 
+                type="file" 
+                className="hidden" 
+                onChange={handleFileUpload} 
+                disabled={isUploading}
+              />
+            </label>
+          </div>
+
+          {/* 첨부파일 리스트 */}
+          {attachments.length === 0 ? (
+            <p className="text-gray-500 text-sm py-4 text-center">등록된 첨부파일이 없습니다.</p>
+          ) : (
+            <ul className="space-y-2">
+              {attachments.map((file) => (
+                <li key={file.id} className="flex justify-between items-center bg-gray-50 p-3 rounded border border-gray-100">
+                  <a 
+                    href={file.file_url} 
+                    target="_blank" 
+                    rel="noopener noreferrer" 
+                    className="text-blue-600 hover:text-blue-800 font-medium text-sm flex-1 truncate pr-4"
+                  >
+                    📄 {file.file_name}
+                  </a>
+                  <button 
+                    onClick={() => handleDeleteFile(file.id, file.file_path)}
+                    className="text-red-500 hover:text-red-700 font-bold text-xs bg-white px-2 py-1 rounded border border-red-200"
+                  >
+                    삭제
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
     </div>
   );
 }

@@ -3,40 +3,47 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 
-// 타입 지정 (빌드 에러 및 런타임 타입 오류 완벽 방지)
 interface Product {
   id: string;
   name: string;
   spec: string;
   price: number;
   is_vat_included: boolean;
+  is_active: boolean;
 }
 
-// 제이테크 품목 관리 페이지 (모바일 반응형 및 한 손 입력 최적화)
 export default function ProductsPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   
-  // 폼 상태 관리
   const [name, setName] = useState('');
   const [spec, setSpec] = useState('');
   const [price, setPrice] = useState<number | ''>('');
   const [isVatIncluded, setIsVatIncluded] = useState(false);
 
-  // 1. 품목 목록 불러오기 (Read)
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [showInactive, setShowInactive] = useState(false);
+
+  // [핵심] 내 회사(company_id)의 품목만 불러오기
   const fetchProducts = async () => {
     try {
       setLoading(true);
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('로그인이 필요합니다.');
+
+      const { data: profile } = await supabase.from('profiles').select('company_id').eq('id', session.user.id).single();
+      if (!profile) throw new Error('소속된 회사 정보가 없습니다.');
+
       const { data, error } = await supabase
         .from('products')
         .select('*')
+        .eq('company_id', profile.company_id) // 내 회사 필터링
         .order('created_at', { ascending: false });
 
       if (error) throw error;
       setProducts(data || []);
     } catch (error: any) {
-      console.error('품목 불러오기 에러:', error.message);
-      alert('데이터를 불러오는데 실패했습니다.');
+      console.error('불러오기 에러:', error.message);
     } finally {
       setLoading(false);
     }
@@ -46,8 +53,8 @@ export default function ProductsPage() {
     fetchProducts();
   }, []);
 
-  // 2. 품목 추가하기 (Create)
-  const handleAddProduct = async (e: React.FormEvent) => {
+  // [핵심] 저장할 때 내 회사(company_id) 꼬리표 달기
+  const handleSaveProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name || price === '') {
       alert('품목명과 단가는 필수 입력 사항입니다.');
@@ -55,130 +62,161 @@ export default function ProductsPage() {
     }
 
     try {
-      // 본사(제이테크) ID 매핑 (인서트 에러 방지)
-      const { data: companyData, error: companyError } = await supabase
-        .from('companies')
-        .select('id')
-        .limit(1)
-        .single();
+      if (editingId) {
+        const { error } = await supabase.from('products').update({ name, spec, price: Number(price), is_vat_included: isVatIncluded }).eq('id', editingId);
+        if (error) throw error;
+      } else {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) throw new Error('로그인 만료');
 
-      if (companyError || !companyData) throw new Error('등록된 본사 정보가 없습니다.');
+        const { data: profile } = await supabase.from('profiles').select('company_id').eq('id', session.user.id).single();
+        if (!profile) throw new Error('회사 정보 없음');
 
-      const { error } = await supabase
-        .from('products')
-        .insert([
-          {
-            company_id: companyData.id,
-            name,
-            spec,
-            price: Number(price),
-            is_vat_included: isVatIncluded
-          }
-        ]);
+        const { error } = await supabase.from('products').insert([{ 
+          company_id: profile.company_id, // 내 회사 ID 매핑
+          name, 
+          spec, 
+          price: Number(price), 
+          is_vat_included: isVatIncluded, 
+          is_active: true 
+        }]);
+        if (error) throw error;
+      }
 
-      if (error) throw error;
-
-      alert('품목이 성공적으로 등록되었습니다.');
-      // 폼 초기화
-      setName('');
-      setSpec('');
-      setPrice('');
-      setIsVatIncluded(false);
-      // 목록 새로고침
+      resetForm();
       fetchProducts();
-
     } catch (error: any) {
-      console.error('품목 등록 에러:', error.message);
-      alert(error.message || '품목 등록에 실패했습니다.');
+      alert('품목 저장에 실패했습니다. ' + error.message);
     }
   };
 
-  // 3. 품목 삭제하기 (Delete)
-  const handleDelete = async (id: string) => {
-    if (!window.confirm('이 품목을 삭제하시겠습니까? (기존 거래명세표에 기록된 데이터는 안전하게 보존됩니다)')) return;
+  const handleEditClick = (product: Product) => {
+    setEditingId(product.id);
+    setName(product.name);
+    setSpec(product.spec || '');
+    setPrice(product.price);
+    setIsVatIncluded(product.is_vat_included);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const resetForm = () => {
+    setEditingId(null);
+    setName('');
+    setSpec('');
+    setPrice('');
+    setIsVatIncluded(false);
+  };
+
+  const handleToggleActive = async (id: string, currentStatus: boolean) => {
+    const actionText = currentStatus ? '비활성화' : '다시 활성화';
+    if (!window.confirm(`이 품목을 ${actionText} 하시겠습니까?`)) return;
 
     try {
-      const { error } = await supabase
-        .from('products')
-        .delete()
-        .eq('id', id);
-
+      const { error } = await supabase.from('products').update({ is_active: !currentStatus }).eq('id', id);
       if (error) throw error;
-      
-      alert('삭제되었습니다.');
       fetchProducts();
     } catch (error: any) {
-      console.error('삭제 에러:', error.message);
-      alert('삭제에 실패했습니다.');
+      alert('상태 변경에 실패했습니다.');
     }
   };
+
+  const filteredProducts = products.filter(product => showInactive ? true : product.is_active);
 
   return (
     <div className="min-h-screen bg-gray-50 p-4 md:p-8 text-black">
-      <div className="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-4 gap-6">
         
-        {/* 왼쪽: 품목 등록 폼 */}
-        <div className="bg-white p-6 shadow-lg rounded-lg h-fit">
-          <h2 className="text-xl font-bold mb-4 border-b pb-2">신규 품목 등록</h2>
-          <form onSubmit={handleAddProduct} className="space-y-4">
+        <div className={`p-6 shadow-lg rounded-lg h-fit transition-colors lg:col-span-1 ${editingId ? 'bg-yellow-50 border-2 border-yellow-400' : 'bg-white'}`}>
+          <h2 className={`text-xl font-bold mb-4 border-b pb-2 ${editingId ? 'text-yellow-700' : ''}`}>
+            {editingId ? '품목 정보 수정' : '신규 품목 등록'}
+          </h2>
+          <form onSubmit={handleSaveProduct} className="space-y-4">
             <div>
               <label className="block text-sm font-medium mb-1">품목명 (필수)</label>
-              <input type="text" value={name} onChange={(e) => setName(e.target.value)} className="w-full border rounded p-2 outline-none focus:border-blue-500" placeholder="예: 와이어 하네스 A형" required />
+              <input type="text" value={name} onChange={(e) => setName(e.target.value)} className="w-full border rounded p-2 outline-none focus:border-blue-500 bg-white" placeholder="예: 와이어 하네스 A형" required />
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">규격</label>
-              <input type="text" value={spec} onChange={(e) => setSpec(e.target.value)} className="w-full border rounded p-2 outline-none focus:border-blue-500" placeholder="예: 200mm, AWG24" />
+              <input type="text" value={spec} onChange={(e) => setSpec(e.target.value)} className="w-full border rounded p-2 outline-none focus:border-blue-500 bg-white" placeholder="예: 200mm, AWG24" />
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">단가 (필수)</label>
-              <input type="number" value={price} onChange={(e) => setPrice(e.target.value === '' ? '' : Number(e.target.value))} className="w-full border rounded p-2 outline-none focus:border-blue-500 text-right" placeholder="0" required />
+              <input type="number" value={price} onChange={(e) => setPrice(e.target.value === '' ? '' : Number(e.target.value))} className="w-full border rounded p-2 outline-none focus:border-blue-500 text-right bg-white" placeholder="0" required />
             </div>
             <div className="flex items-center mt-2">
               <input type="checkbox" id="vat" checked={isVatIncluded} onChange={(e) => setIsVatIncluded(e.target.checked)} className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500" />
               <label htmlFor="vat" className="ml-2 text-sm font-medium text-gray-900">부가세 포함 단가</label>
             </div>
-            <button type="submit" className="w-full bg-green-600 text-white font-bold py-3 rounded hover:bg-green-700 transition mt-4">
-              품목 등록
-            </button>
+            
+            <div className="pt-2 flex flex-col gap-2">
+              <button type="submit" className={`w-full text-white font-bold py-3 rounded transition ${editingId ? 'bg-yellow-500 hover:bg-yellow-600' : 'bg-green-600 hover:bg-green-700'}`}>
+                {editingId ? '수정 내용 저장' : '품목 등록'}
+              </button>
+              {editingId && (
+                <button type="button" onClick={resetForm} className="w-full bg-gray-400 text-white font-bold py-2 rounded hover:bg-gray-500 transition">
+                  수정 취소
+                </button>
+              )}
+            </div>
           </form>
         </div>
 
-        {/* 오른쪽: 품목 목록 리스트 */}
-        <div className="md:col-span-2 bg-white p-6 shadow-lg rounded-lg">
-          <h2 className="text-xl font-bold mb-4 border-b pb-2">품목 단가표</h2>
+        <div className="lg:col-span-3 bg-white p-6 shadow-lg rounded-lg">
+          <div className="flex justify-between items-end mb-4 border-b pb-2">
+            <h2 className="text-xl font-bold">품목 단가표 ({filteredProducts.length}건)</h2>
+            <label className="flex items-center cursor-pointer">
+              <div className="relative">
+                <input type="checkbox" className="sr-only" checked={showInactive} onChange={() => setShowInactive(!showInactive)} />
+                <div className={`block w-10 h-6 rounded-full transition ${showInactive ? 'bg-gray-400' : 'bg-blue-500'}`}></div>
+                <div className={`dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition ${showInactive ? 'transform translate-x-4' : ''}`}></div>
+              </div>
+              <span className="ml-2 text-sm font-medium text-gray-700">비활성 포함 보기</span>
+            </label>
+          </div>
           
           {loading ? (
             <p className="text-center text-gray-500 py-10">데이터를 불러오는 중입니다...</p>
-          ) : products.length === 0 ? (
+          ) : filteredProducts.length === 0 ? (
             <p className="text-center text-gray-500 py-10">등록된 품목이 없습니다.</p>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full border-collapse min-w-[600px]">
+              <table className="w-full border-collapse min-w-[800px]">
                 <thead>
                   <tr className="bg-gray-100 text-left text-sm">
-                    <th className="p-3 border">품목명</th>
+                    <th className="p-3 border text-center whitespace-nowrap">상태</th>
+                    <th className="p-3 border min-w-[200px]">품목명</th>
                     <th className="p-3 border">규격</th>
-                    <th className="p-3 border text-right">단가</th>
-                    <th className="p-3 border text-center">부가세</th>
-                    <th className="p-3 border text-center">관리</th>
+                    <th className="p-3 border text-right whitespace-nowrap">단가</th>
+                    <th className="p-3 border text-center whitespace-nowrap">부가세</th>
+                    <th className="p-3 border text-center whitespace-nowrap">관리</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {products.map((product) => (
-                    <tr key={product.id} className="border-b hover:bg-gray-50 text-sm">
-                      <td className="p-3 font-medium">{product.name}</td>
-                      <td className="p-3 text-gray-600">{product.spec || '-'}</td>
-                      <td className="p-3 text-right font-medium">{product.price.toLocaleString()}원</td>
-                      <td className="p-3 text-center">
-                        {product.is_vat_included ? (
-                          <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-0.5 rounded">포함</span>
+                  {filteredProducts.map((product) => (
+                    <tr key={product.id} className={`border-b hover:bg-gray-50 text-sm ${!product.is_active ? 'bg-gray-100 text-gray-400' : ''}`}>
+                      <td className="p-3 text-center whitespace-nowrap">
+                        {product.is_active ? (
+                          <span className="bg-green-100 text-green-700 text-xs font-bold px-2 py-1 rounded">사용중</span>
                         ) : (
-                          <span className="bg-gray-100 text-gray-800 text-xs font-medium px-2.5 py-0.5 rounded">별도</span>
+                          <span className="bg-gray-200 text-gray-600 text-xs font-bold px-2 py-1 rounded">비활성</span>
                         )}
                       </td>
-                      <td className="p-3 text-center">
-                        <button onClick={() => handleDelete(product.id)} className="text-red-500 hover:text-red-700 font-bold px-2 py-1 border border-red-200 rounded">
-                          삭제
+                      <td className={`p-3 font-medium ${!product.is_active ? 'line-through decoration-gray-400' : ''}`}>{product.name}</td>
+                      <td className="p-3">{product.spec || '-'}</td>
+                      <td className="p-3 text-right font-medium whitespace-nowrap">{product.price.toLocaleString()}원</td>
+                      <td className="p-3 text-center whitespace-nowrap">
+                        {product.is_vat_included ? (
+                          <span className={`text-xs font-medium px-2.5 py-0.5 rounded ${product.is_active ? 'bg-blue-100 text-blue-800' : 'bg-gray-200 text-gray-500'}`}>포함</span>
+                        ) : (
+                          <span className={`text-xs font-medium px-2.5 py-0.5 rounded ${product.is_active ? 'bg-gray-100 text-gray-800' : 'bg-gray-200 text-gray-500'}`}>별도</span>
+                        )}
+                      </td>
+                      <td className="p-3 text-center space-x-2 whitespace-nowrap">
+                        <button onClick={() => handleEditClick(product)} className="text-blue-600 hover:text-blue-800 font-bold px-2 py-1 border border-blue-200 rounded bg-white">
+                          수정
+                        </button>
+                        <button onClick={() => handleToggleActive(product.id, product.is_active)} className={`${product.is_active ? 'text-red-500 hover:text-red-700 border-red-200' : 'text-green-600 hover:text-green-800 border-green-200'} font-bold px-2 py-1 border rounded bg-white`}>
+                          {product.is_active ? '비활성' : '활성'}
                         </button>
                       </td>
                     </tr>
