@@ -151,14 +151,12 @@ export default function MainPage() {
     <div className="min-h-screen bg-gray-100 p-4 md:p-8 text-black">
       <div className="max-w-6xl mx-auto space-y-6 md:space-y-8">
         
-        {/* 상단 환영 헤더 & 설정/로그아웃 버튼 */}
         <header className="bg-white p-4 md:p-6 rounded-lg shadow-md flex flex-col md:flex-row justify-between items-start md:items-center border-l-4 border-blue-600 gap-4">
           <div>
             <h1 className="text-2xl md:text-3xl font-extrabold text-gray-900">J-TECH 통합 ERP 시스템</h1>
             <p className="text-sm md:text-base text-gray-500 mt-1 font-medium">환영합니다! 원하시는 업무를 선택해주세요.</p>
           </div>
           
-          {/* === 수정된 버튼 영역: 내 회사 설정 버튼 추가 === */}
           <div className="flex w-full md:w-auto gap-2">
             <Link 
               href="/company"
@@ -175,7 +173,6 @@ export default function MainPage() {
           </div>
         </header>
 
-        {/* 매출 요약 대시보드 */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
           <div className="bg-white p-6 rounded-lg shadow-md border-l-4 border-indigo-500 flex items-center justify-between transition hover:shadow-lg">
             <div>
@@ -193,8 +190,8 @@ export default function MainPage() {
           </div>
         </div>
 
-        {/* 4대 핵심 메뉴 바로가기 */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+        {/* === 수정: 핵심 메뉴 바로가기 (6개로 확장) === */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
           <Link href="/clients" className="bg-white p-6 rounded-lg shadow hover:shadow-xl transition transform hover:-translate-y-1 group border border-transparent hover:border-gray-200">
             <div className="text-4xl mb-4 group-hover:scale-110 transition inline-block">🏢</div>
             <h2 className="text-xl font-bold text-gray-800">거래처 관리</h2>
@@ -205,6 +202,21 @@ export default function MainPage() {
             <h2 className="text-xl font-bold text-gray-800">품목 단가 관리</h2>
             <p className="text-sm text-gray-500 mt-2">하네스 규격 및 단가표 업데이트</p>
           </Link>
+
+          {/* 신규: 견적서 작성 */}
+          <Link href="/quotation" className="bg-white p-6 rounded-lg shadow hover:shadow-xl transition transform hover:-translate-y-1 group border-2 border-transparent hover:border-yellow-400">
+            <div className="text-4xl mb-4 group-hover:scale-110 transition inline-block">📝</div>
+            <h2 className="text-xl font-bold text-yellow-700">견적서 작성</h2>
+            <p className="text-sm text-gray-500 mt-2">신규 견적서 입력 및 PDF 발행</p>
+          </Link>
+
+          {/* 신규: 견적내역 조회 */}
+          <Link href="/quotation-list" className="bg-white p-6 rounded-lg shadow hover:shadow-xl transition transform hover:-translate-y-1 group border border-transparent hover:border-gray-200">
+            <div className="text-4xl mb-4 group-hover:scale-110 transition inline-block">🗂️</div>
+            <h2 className="text-xl font-bold text-gray-800">견적내역 관리</h2>
+            <p className="text-sm text-gray-500 mt-2">발행된 견적서 조회 및 수정</p>
+          </Link>
+
           <Link href="/invoice" className="bg-white p-6 rounded-lg shadow hover:shadow-xl transition transform hover:-translate-y-1 group border-2 border-transparent hover:border-blue-400">
             <div className="text-4xl mb-4 group-hover:scale-110 transition inline-block">✍️</div>
             <h2 className="text-xl font-bold text-blue-700">명세서 작성</h2>

@@ -10,7 +10,6 @@ interface Client {
   name: string;
 }
 
-// === 신규 추가: 품목명(invoice_items) 타입 추가 ===
 interface Invoice {
   id: string;
   invoice_no: string;
@@ -24,6 +23,7 @@ interface Invoice {
   };
   invoice_items: {
     name: string;
+    qty: number;
   }[];
 }
 
@@ -36,24 +36,21 @@ export default function SalesPage() {
   const [endDate, setEndDate] = useState('');
   const [selectedClientId, setSelectedClientId] = useState('');
 
-  // === 신규 추가: 연도/월 빠른 필터 상태 ===
   const [quickYear, setQuickYear] = useState(new Date().getFullYear().toString());
   const [quickMonth, setQuickMonth] = useState((new Date().getMonth() + 1).toString());
 
-  // 페이지 첫 진입 시 이번 달 데이터가 기본으로 세팅되도록 설정
+  const [companyName, setCompanyName] = useState('J-TECH');
+
   useEffect(() => {
     applyQuickFilter(quickYear, quickMonth);
   }, []);
 
-  // === 신규 추가: 빠른 필터 동작 로직 ===
   const applyQuickFilter = (year: string, month: string) => {
     if (!year) return;
     if (year && !month) {
-      // 월이 '전체'일 경우 해당 연도의 1월 1일 ~ 12월 31일 세팅
       setStartDate(`${year}-01-01`);
       setEndDate(`${year}-12-31`);
     } else if (year && month) {
-      // 특정 월일 경우 그 달의 1일 ~ 마지막 날짜 자동 계산 세팅
       const paddedMonth = month.padStart(2, '0');
       const lastDay = new Date(Number(year), Number(month), 0).getDate();
       setStartDate(`${year}-${paddedMonth}-01`);
@@ -83,6 +80,9 @@ export default function SalesPage() {
       const { data: profile } = await supabase.from('profiles').select('company_id').eq('id', session.user.id).single();
       if (!profile) throw new Error('회사 정보가 없습니다.');
 
+      const { data: compData } = await supabase.from('companies').select('name').eq('id', profile.company_id).single();
+      if (compData && compData.name) setCompanyName(compData.name);
+
       const { data: clientsData } = await supabase
         .from('clients')
         .select('id, name')
@@ -91,7 +91,6 @@ export default function SalesPage() {
 
       if (clientsData) setClients(clientsData);
 
-      // === 수정: 명세서 품목 이름(invoice_items)도 같이 가져오도록 조인(Join) 추가 ===
       let query = supabase
         .from('invoices')
         .select(`
@@ -103,7 +102,7 @@ export default function SalesPage() {
           total_amount,
           client_id,
           clients ( name ),
-          invoice_items ( name )
+          invoice_items ( name, qty )
         `)
         .eq('company_id', profile.company_id)
         .order('created_at', { ascending: false });
@@ -115,7 +114,12 @@ export default function SalesPage() {
       const { data: invoicesData, error } = await query;
 
       if (error) throw error;
-      setInvoices(invoicesData as unknown as Invoice[]);
+      
+      const sortedData = (invoicesData as unknown as Invoice[]).sort((a, b) => 
+        new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      );
+      
+      setInvoices(sortedData);
 
     } catch (error: any) {
       console.error('불러오기 에러:', error.message);
@@ -128,11 +132,14 @@ export default function SalesPage() {
     fetchData();
   }, [startDate, endDate, selectedClientId]);
 
-  // === 신규 추가: 품목명 깔끔하게 줄여주는 함수 (예: 하네스A 외 2건) ===
   const getProductName = (items: { name: string }[]) => {
     if (!items || items.length === 0) return '품목 없음';
     if (items.length === 1) return items[0].name;
     return `${items[0].name} 외 ${items.length - 1}건`;
+  };
+
+  const getFullItemsDetails = (items: { name: string, qty: number }[]) => {
+    return items?.map(item => `${item.name}(${item.qty})`).join(', ') || '품목 없음';
   };
 
   const exportToExcel = () => {
@@ -140,31 +147,62 @@ export default function SalesPage() {
       alert('다운로드할 데이터가 없습니다.');
       return;
     }
-
     const excelData = invoices.map((inv, index) => ({
       'No': index + 1,
       '문서번호': inv.invoice_no,
       '작성일자': new Date(inv.created_at).toLocaleDateString(),
       '거래처명': inv.clients?.name || '알 수 없음',
-      '품목명': getProductName(inv.invoice_items), // 엑셀에도 품목명 추가!
+      '품목요약': getProductName(inv.invoice_items),
       '공급가액': inv.supply_amount,
       '부가세': inv.vat_amount,
       '총합계': inv.total_amount,
     }));
-
     const worksheet = XLSX.utils.json_to_sheet(excelData);
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "매출내역");
-    
+    XLSX.utils.book_append_sheet(workbook, worksheet, "기본매출내역");
     const today = new Date().toISOString().slice(0, 10);
-    XLSX.writeFile(workbook, `JTECH_매출내역_${today}.xlsx`);
+    XLSX.writeFile(workbook, `JTECH_매출요약_${today}.xlsx`);
+  };
+
+  const exportLedgerToExcel = () => {
+    if (invoices.length === 0) {
+      alert('다운로드할 데이터가 없습니다.');
+      return;
+    }
+    const ledgerData = invoices.map((inv) => {
+      return {
+        '일자': new Date(inv.created_at).toLocaleDateString(),
+        '거래처명': inv.clients?.name || '알 수 없음',
+        '품목 상세내역 (전체)': getFullItemsDetails(inv.invoice_items),
+        '공급가액': inv.supply_amount,
+        '세액(VAT)': inv.vat_amount,
+        '합계금액': inv.total_amount,
+        '비고': ''
+      };
+    });
+    const worksheet = XLSX.utils.json_to_sheet(ledgerData);
+    worksheet['!cols'] = [
+      { wpx: 100 }, { wpx: 150 }, { wpx: 350 }, { wpx: 100 }, { wpx: 100 }, { wpx: 120 }, { wpx: 100 },
+    ];
+    const workbook = XLSX.utils.book_new();
+    const sheetTitle = quickMonth ? `${quickMonth}월 매출원장` : '매출원장';
+    XLSX.utils.book_append_sheet(workbook, worksheet, sheetTitle);
+    const today = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(workbook, `JTECH_매출원장_${quickYear}년${quickMonth}월_${today}.xlsx`);
+  };
+
+  const handlePrintLedger = () => {
+    if (invoices.length === 0) {
+      alert('인쇄할 내역이 없습니다. 날짜를 확인해주세요.');
+      return;
+    }
+    window.print();
   };
 
   const handleDeleteInvoice = async (invoiceId: string) => {
     if (!window.confirm('정말 이 명세서를 삭제하시겠습니까?\n(경고: 관련된 품목 내역도 함께 영구 삭제되며 복구할 수 없습니다.)')) {
       return;
     }
-
     try {
       const { error: itemsError } = await supabase.from('invoice_items').delete().eq('invoice_id', invoiceId);
       if (itemsError) throw itemsError;
@@ -174,9 +212,7 @@ export default function SalesPage() {
 
       alert('명세서가 성공적으로 삭제되었습니다.');
       fetchData(); 
-      
     } catch (error: any) {
-      console.error('삭제 에러:', error.message);
       alert('명세서 삭제에 실패했습니다.');
     }
   };
@@ -185,60 +221,73 @@ export default function SalesPage() {
   const totalVat = invoices.reduce((sum, inv) => sum + (inv.vat_amount || 0), 0);
   const grandTotal = invoices.reduce((sum, inv) => sum + (inv.total_amount || 0), 0);
 
-  // 연도 셀렉트박스용 배열 생성 (2024년 ~ 현재연도+1년)
   const currentYearNum = new Date().getFullYear();
   const yearOptions = Array.from({length: 5}, (_, i) => currentYearNum - 2 + i); 
 
+  const getFilteredClientName = () => {
+    if (!selectedClientId) return '전체 거래처';
+    const client = clients.find(c => c.id === selectedClientId);
+    return client ? client.name : '전체 거래처';
+  };
+
   return (
-    <div className="min-h-screen bg-gray-50 p-4 md:p-8 text-black">
-      <div className="max-w-7xl mx-auto space-y-4 md:space-y-6">
-        
+    <div className="min-h-screen bg-gray-50 p-4 md:p-8 text-black print:bg-white print:p-0">
+      
+      {/* 프린트용 CSS: 여백 축소 및 페이지 넘김 완벽 차단 */}
+      <style dangerouslySetInnerHTML={{
+        __html: `
+          @media print {
+            @page { size: A4 landscape; margin: 10mm; } 
+            body { background-color: white !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            .print-table-wrapper { page-break-inside: avoid; }
+          }
+        `
+      }} />
+
+      <div className="max-w-7xl mx-auto space-y-4 md:space-y-6 print:hidden">
         <div className="bg-white p-4 md:p-6 shadow-lg rounded-lg">
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-4 md:mb-6 gap-4">
+          <div className="flex flex-col lg:flex-row justify-between items-start lg:items-end mb-4 md:mb-6 gap-4">
             <h1 className="text-xl md:text-2xl font-bold">매출 및 명세서 조회</h1>
-            <button 
-              onClick={exportToExcel}
-              className="w-full md:w-auto bg-green-600 hover:bg-green-700 text-white font-bold py-3 md:py-2 px-4 rounded-lg shadow flex items-center justify-center gap-2 transition"
-            >
-              <span>📊</span> 엑셀 다운로드
-            </button>
+            <div className="flex flex-col sm:flex-row w-full lg:w-auto gap-2">
+              <button onClick={handlePrintLedger} className="flex-1 sm:flex-none bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 md:py-2 px-6 rounded-lg shadow flex items-center justify-center gap-2 transition">
+                <span>🖨️</span> 원장 인쇄 (A4)
+              </button>
+              <button onClick={exportLedgerToExcel} className="flex-1 sm:flex-none bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 md:py-2 px-6 rounded-lg shadow flex items-center justify-center gap-2 transition">
+                <span>📓</span> 원장 엑셀
+              </button>
+              <button onClick={exportToExcel} className="flex-1 sm:flex-none bg-green-600 hover:bg-green-700 text-white font-bold py-3 md:py-2 px-4 rounded-lg shadow flex items-center justify-center gap-2 transition">
+                <span>📊</span> 기본 엑셀
+              </button>
+            </div>
           </div>
 
-          {/* === 신규 추가: 마우스로 바로 찍는 스마트 퀵 필터 === */}
           <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 mb-4 flex flex-col md:flex-row items-start md:items-center gap-4">
             <span className="font-bold text-blue-800 shrink-0">📅 빠른 검색:</span>
             <div className="flex gap-2 w-full md:w-auto">
               <select value={quickYear} onChange={handleYearChange} className="flex-1 md:w-32 border rounded-lg p-2.5 outline-none focus:border-blue-500 bg-white font-medium text-gray-700 shadow-sm">
-                {yearOptions.map(y => (
-                  <option key={y} value={y}>{y}년</option>
-                ))}
+                {yearOptions.map(y => <option key={y} value={y}>{y}년</option>)}
               </select>
               <select value={quickMonth} onChange={handleMonthChange} className="flex-1 md:w-32 border rounded-lg p-2.5 outline-none focus:border-blue-500 bg-white font-medium text-gray-700 shadow-sm">
                 <option value="">전체 월</option>
-                {Array.from({length: 12}, (_, i) => i + 1).map(m => (
-                  <option key={m} value={m}>{m}월</option>
-                ))}
+                {Array.from({length: 12}, (_, i) => i + 1).map(m => <option key={m} value={m}>{m}월</option>)}
               </select>
             </div>
-            <span className="text-xs text-blue-600 font-medium md:ml-2">* 연도와 월을 선택하면 아래 날짜가 자동으로 맞춰집니다.</span>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4 bg-gray-50 p-3 md:p-4 rounded-lg border">
             <div>
-              <label className="block text-xs md:text-sm font-bold mb-1 text-gray-700">시작일 (수동)</label>
+              <label className="block text-xs md:text-sm font-bold mb-1 text-gray-700">시작일</label>
               <input type="date" value={startDate} onChange={(e) => { setStartDate(e.target.value); setQuickMonth(''); }} className="w-full border rounded-lg p-2.5 outline-none focus:border-blue-500 bg-white" />
             </div>
             <div>
-              <label className="block text-xs md:text-sm font-bold mb-1 text-gray-700">종료일 (수동)</label>
+              <label className="block text-xs md:text-sm font-bold mb-1 text-gray-700">종료일</label>
               <input type="date" value={endDate} onChange={(e) => { setEndDate(e.target.value); setQuickMonth(''); }} className="w-full border rounded-lg p-2.5 outline-none focus:border-blue-500 bg-white" />
             </div>
             <div>
               <label className="block text-xs md:text-sm font-bold mb-1 text-gray-700">거래처 필터</label>
               <select value={selectedClientId} onChange={(e) => setSelectedClientId(e.target.value)} className="w-full border rounded-lg p-2.5 outline-none focus:border-blue-500 bg-white">
                 <option value="">전체 거래처</option>
-                {clients.map(client => (
-                  <option key={client.id} value={client.id}>{client.name}</option>
-                ))}
+                {clients.map(client => <option key={client.id} value={client.id}>{client.name}</option>)}
               </select>
             </div>
           </div>
@@ -254,7 +303,7 @@ export default function SalesPage() {
             <p className="text-lg md:text-2xl font-bold">{totalVat.toLocaleString()}원</p>
           </div>
           <div className="bg-white p-4 md:p-6 rounded-lg shadow border-l-4 border-green-500 flex justify-between items-center md:block">
-            <p className="text-sm text-gray-500 font-bold mb-1">총 합계 (조회 결과)</p>
+            <p className="text-sm text-gray-500 font-bold mb-1">총 합계</p>
             <p className="text-xl md:text-2xl font-extrabold text-green-700">{grandTotal.toLocaleString()}원</p>
           </div>
         </div>
@@ -266,14 +315,14 @@ export default function SalesPage() {
             <p className="text-center text-gray-500 py-10">조건에 맞는 매출 내역이 없습니다.</p>
           ) : (
             <>
-              {/* 1. 데스크탑 뷰 (표 형식) */}
+              {/* 데스크탑 뷰 */}
               <div className="hidden md:block overflow-x-auto">
                 <table className="w-full border-collapse min-w-[800px]">
                   <thead>
                     <tr className="bg-gray-100 text-left text-sm border-b-2 border-gray-200">
                       <th className="p-3">작성일자</th>
                       <th className="p-3">문서번호</th>
-                      <th className="p-3 w-48">품목명</th> {/* 품목명 칸 추가 */}
+                      <th className="p-3 w-48">품목명</th>
                       <th className="p-3">거래처명</th>
                       <th className="p-3 text-right">공급가액</th>
                       <th className="p-3 text-right">부가세</th>
@@ -286,7 +335,6 @@ export default function SalesPage() {
                       <tr key={inv.id} className="border-b hover:bg-gray-50 transition text-sm">
                         <td className="p-3 text-gray-600 whitespace-nowrap">{new Date(inv.created_at).toLocaleDateString()}</td>
                         <td className="p-3 font-medium text-gray-900 whitespace-nowrap">{inv.invoice_no}</td>
-                        {/* 품목명 데이터 표시 */}
                         <td className="p-3 font-medium text-gray-700 truncate max-w-[200px]" title={getProductName(inv.invoice_items)}>
                           {getProductName(inv.invoice_items)}
                         </td>
@@ -295,12 +343,8 @@ export default function SalesPage() {
                         <td className="p-3 text-right text-gray-500 whitespace-nowrap">{inv.vat_amount.toLocaleString()}원</td>
                         <td className="p-3 text-right font-bold text-green-700 whitespace-nowrap">{inv.total_amount.toLocaleString()}원</td>
                         <td className="p-3 text-center space-x-1 whitespace-nowrap">
-                          <Link href={`/sales/${inv.id}`} className="inline-block text-blue-600 hover:text-blue-800 font-bold px-2 py-1 border border-blue-200 rounded bg-white text-xs hover:bg-blue-50 transition">
-                            보기
-                          </Link>
-                          <button onClick={() => handleDeleteInvoice(inv.id)} className="inline-block text-red-500 hover:text-red-700 font-bold px-2 py-1 border border-red-200 rounded bg-white text-xs hover:bg-red-50 transition">
-                            삭제
-                          </button>
+                          <Link href={`/sales/${inv.id}`} className="inline-block text-blue-600 hover:text-blue-800 font-bold px-2 py-1 border border-blue-200 rounded bg-white text-xs hover:bg-blue-50 transition">보기</Link>
+                          <button onClick={() => handleDeleteInvoice(inv.id)} className="inline-block text-red-500 hover:text-red-700 font-bold px-2 py-1 border border-red-200 rounded bg-white text-xs hover:bg-red-50 transition">삭제</button>
                         </td>
                       </tr>
                     ))}
@@ -308,7 +352,7 @@ export default function SalesPage() {
                 </table>
               </div>
 
-              {/* 2. 모바일 뷰 (카드 형식) */}
+              {/* 모바일 뷰 */}
               <div className="md:hidden space-y-4">
                 {invoices.map((inv) => (
                   <div key={inv.id} className="bg-white border-2 border-gray-200 rounded-xl p-4 shadow-sm relative">
@@ -318,7 +362,6 @@ export default function SalesPage() {
                     </div>
                     <div className="mb-4">
                       <h3 className="font-extrabold text-xl text-blue-800">{inv.clients?.name || '삭제된 거래처'}</h3>
-                      {/* 모바일에도 품목명 추가 */}
                       <p className="text-sm font-medium text-gray-600 mt-1 truncate">품목: {getProductName(inv.invoice_items)}</p>
                     </div>
                     <div className="flex justify-between items-end">
@@ -329,12 +372,8 @@ export default function SalesPage() {
                       <div className="text-right flex flex-col items-end">
                         <p className="font-extrabold text-xl text-green-700 mb-2">{inv.total_amount.toLocaleString()}원</p>
                         <div className="flex gap-2">
-                          <button onClick={() => handleDeleteInvoice(inv.id)} className="bg-red-50 text-red-600 border border-red-200 px-3 py-2 rounded-lg text-sm font-bold transition hover:bg-red-100">
-                            삭제
-                          </button>
-                          <Link href={`/sales/${inv.id}`} className="bg-blue-50 text-blue-700 border border-blue-200 px-3 py-2 rounded-lg text-sm font-bold text-center transition hover:bg-blue-100">
-                            명세서 열기
-                          </Link>
+                          <button onClick={() => handleDeleteInvoice(inv.id)} className="bg-red-50 text-red-600 border border-red-200 px-3 py-2 rounded-lg text-sm font-bold transition hover:bg-red-100">삭제</button>
+                          <Link href={`/sales/${inv.id}`} className="bg-blue-50 text-blue-700 border border-blue-200 px-3 py-2 rounded-lg text-sm font-bold text-center transition hover:bg-blue-100">명세서 열기</Link>
                         </div>
                       </div>
                     </div>
@@ -344,8 +383,63 @@ export default function SalesPage() {
             </>
           )}
         </div>
-
       </div>
+
+      {/* ==============================================
+          2. 인쇄 전용 화면 (안내 문구를 tbody에 병합하여 절대 안 찢어짐)
+          ============================================== */}
+      <div className="hidden print:block w-full max-w-none text-black print-table-wrapper">
+        <h1 className="text-3xl font-extrabold text-center mb-6 tracking-widest underline underline-offset-8 decoration-2">매 출 원 장</h1>
+        
+        <div className="flex justify-between items-end mb-4 font-bold text-sm">
+          <div>
+            <p className="mb-1">조회 기간 : {startDate} ~ {endDate}</p>
+            <p>조회 대상 : <span className="text-blue-800">{getFilteredClientName()}</span></p>
+          </div>
+          <div className="text-right">
+            <p>공급자 : {companyName}</p>
+          </div>
+        </div>
+
+        <table className="w-full border-collapse border border-black text-xs">
+          <thead>
+            <tr className="bg-gray-100 text-center font-bold">
+              <th className="border border-black p-2 w-20">일자</th>
+              <th className="border border-black p-2 w-32">거래처명</th>
+              <th className="border border-black p-2">품목 상세내역 (수량)</th>
+              <th className="border border-black p-2 w-24">공급가액</th>
+              <th className="border border-black p-2 w-24">세액</th>
+              <th className="border border-black p-2 w-28">합계금액</th>
+            </tr>
+          </thead>
+          <tbody>
+            {invoices.map((inv) => (
+              <tr key={inv.id}>
+                <td className="border border-black p-2 text-center">{new Date(inv.created_at).toLocaleDateString().slice(2)}</td>
+                <td className="border border-black p-2 text-center font-bold">{inv.clients?.name || '-'}</td>
+                <td className="border border-black p-2 leading-relaxed">{getFullItemsDetails(inv.invoice_items)}</td>
+                <td className="border border-black p-2 text-right">{inv.supply_amount.toLocaleString()}</td>
+                <td className="border border-black p-2 text-right text-gray-600">{inv.vat_amount.toLocaleString()}</td>
+                <td className="border border-black p-2 text-right font-bold text-gray-900">{inv.total_amount.toLocaleString()}</td>
+              </tr>
+            ))}
+            {/* 총 합계도 tbody 내부로 흡수 */}
+            <tr className="bg-gray-200 font-extrabold text-sm border-t-2 border-black">
+              <td colSpan={3} className="border border-black p-3 text-center tracking-widest">총 합 계</td>
+              <td className="border border-black p-3 text-right">{totalSupply.toLocaleString()}</td>
+              <td className="border border-black p-3 text-right">{totalVat.toLocaleString()}</td>
+              <td className="border border-black p-3 text-right">{grandTotal.toLocaleString()}</td>
+            </tr>
+            {/* 안내 문구도 tbody의 마지막 줄로 완전히 병합하여 분리 절대 방어 */}
+            <tr className="border-none">
+              <td colSpan={6} className="border-none pt-6 pb-2 text-center text-sm text-gray-700 font-bold tracking-wide">
+                - 위 내용과 같이 매출 내역을 청구(보고)합니다 -
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
     </div>
   );
 }

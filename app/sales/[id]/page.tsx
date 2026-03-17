@@ -12,6 +12,7 @@ interface InvoiceDetail {
   supply_amount: number;
   vat_amount: number;
   total_amount: number;
+  created_at: string;
   client_id: string;
   clients: {
     name: string;
@@ -22,6 +23,9 @@ interface InvoiceDetail {
   companies: {
     name: string;
     business_number: string;
+    ceo_name: string;
+    address: string;
+    contact: string;
   };
 }
 
@@ -43,7 +47,6 @@ interface Product {
   is_vat_included: boolean;
 }
 
-// === 신규 추가: 첨부파일 타입 ===
 interface Attachment {
   id: string;
   file_name: string;
@@ -65,7 +68,6 @@ export default function InvoiceDetailPage() {
   const [editItems, setEditItems] = useState<InvoiceItem[]>([]);
   const [isUpdating, setIsUpdating] = useState(false);
 
-  // === 신규 추가: 첨부파일 상태 ===
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [isUploading, setIsUploading] = useState(false);
 
@@ -83,7 +85,6 @@ export default function InvoiceDetailPage() {
         .single();
         
       if (profileError || !profile) {
-        console.error("프로필 정보 없음:", profileError);
         throw new Error('회사 정보를 불러오는데 실패했습니다.');
       }
 
@@ -92,7 +93,7 @@ export default function InvoiceDetailPage() {
         .select(`
           *,
           clients (name, business_number, address, contact),
-          companies (name, business_number)
+          companies (name, business_number, ceo_name, address, contact)
         `)
         .eq('id', invoiceId)
         .single();
@@ -118,7 +119,6 @@ export default function InvoiceDetailPage() {
         
       if (productsData) setProducts(productsData);
 
-      // === 신규 추가: 첨부파일 목록 불러오기 ===
       const { data: attachData, error: attachError } = await supabase
         .from('attachments')
         .select('*')
@@ -151,7 +151,6 @@ export default function InvoiceDetailPage() {
 
   const handleExcelExport = () => {
     if (!invoice || items.length === 0) return;
-
     try {
       const excelData = items.map((item, index) => ({
         '연번': index + 1,
@@ -161,15 +160,12 @@ export default function InvoiceDetailPage() {
         '단가': item.price,
         '공급가액': item.price * item.qty
       }));
-
       const worksheet = XLSX.utils.json_to_sheet(excelData);
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, "거래명세표");
-
       const fileName = `거래명세표_${invoice.clients?.name}_${invoice.invoice_no}.xlsx`;
       XLSX.writeFile(workbook, fileName);
     } catch (error: any) {
-      console.error('엑셀 변환 에러:', error.message);
       alert('엑셀 파일 생성 중 오류가 발생했습니다.');
     }
   };
@@ -192,7 +188,6 @@ export default function InvoiceDetailPage() {
   const handleProductSelect = (index: number, productId: string) => {
     const selectedProduct = products.find(p => p.id === productId);
     const newItems = [...editItems];
-    
     if (selectedProduct) {
       newItems[index] = {
         ...newItems[index],
@@ -212,10 +207,8 @@ export default function InvoiceDetailPage() {
       alert('모든 품목을 올바르게 입력하고 수량을 지정해주세요.');
       return;
     }
-
     try {
       setIsUpdating(true);
-
       let supplyTotal = 0;
       let vatTotal = 0;
 
@@ -262,77 +255,191 @@ export default function InvoiceDetailPage() {
       fetchInvoiceDetail(); 
 
     } catch (error: any) {
-      console.error('수정 에러:', error.message);
       alert('수정에 실패했습니다.');
     } finally {
       setIsUpdating(false);
     }
   };
 
-  // === 신규 추가: 파일 업로드 핸들러 ===
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     try {
       if (!e.target.files || e.target.files.length === 0) return;
       const file = e.target.files[0];
-      
       setIsUploading(true);
 
-      // 1. Storage에 파일 업로드 (이름 충돌 방지를 위해 현재 시간 추가)
       const fileExt = file.name.split('.').pop();
       const fileName = `${invoiceId}_${Date.now()}.${fileExt}`;
       const filePath = `${fileName}`;
 
-      const { error: uploadError } = await supabase.storage
-        .from('attachments')
-        .upload(filePath, file);
-
+      const { error: uploadError } = await supabase.storage.from('attachments').upload(filePath, file);
       if (uploadError) throw uploadError;
 
-      // 2. 업로드된 파일의 공개 URL 가져오기
-      const { data: urlData } = supabase.storage
-        .from('attachments')
-        .getPublicUrl(filePath);
+      const { data: urlData } = supabase.storage.from('attachments').getPublicUrl(filePath);
 
-      // 3. DB 테이블에 기록 저장
-      const { error: dbError } = await supabase
-        .from('attachments')
-        .insert([{
-          invoice_id: invoiceId,
-          file_name: file.name,
-          file_path: filePath,
-          file_url: urlData.publicUrl
-        }]);
+      const { error: dbError } = await supabase.from('attachments').insert([{
+        invoice_id: invoiceId,
+        file_name: file.name,
+        file_path: filePath,
+        file_url: urlData.publicUrl
+      }]);
 
       if (dbError) throw dbError;
 
-      // 목록 새로고침
       fetchInvoiceDetail();
       alert('파일이 성공적으로 첨부되었습니다.');
 
     } catch (error: any) {
-      console.error("업로드 에러:", error.message);
       alert('파일 업로드에 실패했습니다. (Storage 버킷을 생성했는지 확인해주세요.)');
     } finally {
       setIsUploading(false);
-      e.target.value = ''; // input 초기화
+      e.target.value = ''; 
     }
   };
 
-  // === 신규 추가: 파일 삭제 핸들러 ===
   const handleDeleteFile = async (id: string, filePath: string) => {
     if (!window.confirm('첨부파일을 삭제하시겠습니까?')) return;
-
     try {
-      // 1. Storage에서 삭제
       await supabase.storage.from('attachments').remove([filePath]);
-      // 2. DB에서 삭제
       const { error } = await supabase.from('attachments').delete().eq('id', id);
       if (error) throw error;
-
-      fetchInvoiceDetail(); // 목록 새로고침
+      fetchInvoiceDetail(); 
     } catch (error: any) {
       alert('파일 삭제에 실패했습니다.');
     }
+  };
+
+  const renderInvoiceHalf = (typeLabel: string) => {
+    if (!invoice) return null;
+    
+    const minRows = 5;
+    const totalRows = Math.max(minRows, items.length);
+    
+    return (
+      <div className="bg-white p-6 shadow-lg mb-4 print:shadow-none print:m-0 print:p-0 print-half border border-gray-300 print:border-none relative">
+        
+        <div className="flex justify-between items-end mb-4 border-b-2 border-black pb-2">
+          <div className="w-1/3">
+            <p className="text-xs font-bold mb-1">작성일자: {new Date(invoice.created_at).toLocaleDateString()}</p>
+          </div>
+          <div className="w-1/3 text-center">
+            <h1 className="text-2xl font-extrabold tracking-[0.5em] underline underline-offset-4 decoration-2">거래명세표</h1>
+            <p className="text-xs font-bold text-gray-500 mt-1">({typeLabel})</p>
+          </div>
+          <div className="w-1/3 text-right">
+          </div>
+        </div>
+
+        <div className="flex justify-between gap-2 text-xs mb-4">
+          <table className="w-1/2 border-collapse border border-black">
+            <tbody>
+              <tr>
+                <th rowSpan={4} className="border border-black bg-gray-100 p-1 w-6 text-center leading-tight">공<br/>급<br/>받<br/>는<br/>자</th>
+                <th className="border border-black bg-gray-100 p-1 w-16">등록번호</th>
+                <td className="border border-black p-1 font-bold text-center">{invoice.clients?.business_number || ''}</td>
+              </tr>
+              <tr>
+                <th className="border border-black bg-gray-100 p-1">상호(명)</th>
+                <td className="border border-black p-1 font-bold">{invoice.clients?.name} 귀하</td>
+              </tr>
+              <tr>
+                <th className="border border-black bg-gray-100 p-1">사업장주소</th>
+                <td className="border border-black p-1 truncate max-w-[120px]">{invoice.clients?.address || ''}</td>
+              </tr>
+              <tr>
+                <th className="border border-black bg-gray-100 p-1">연락처</th>
+                <td className="border border-black p-1">{invoice.clients?.contact || ''}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <table className="w-1/2 border-collapse border border-black">
+            <tbody>
+              <tr>
+                <th rowSpan={4} className="border border-black bg-gray-100 p-1 w-6 text-center leading-tight">공<br/>급<br/>자</th>
+                <th className="border border-black bg-gray-100 p-1 w-16">등록번호</th>
+                <td colSpan={3} className="border border-black p-1 font-bold text-center">{invoice.companies?.business_number || '사업자번호 미등록'}</td>
+              </tr>
+              <tr>
+                <th className="border border-black bg-gray-100 p-1">상호(명)</th>
+                <td className="border border-black p-1 font-bold">{invoice.companies?.name || 'J-TECH'}</td>
+                <th className="border border-black bg-gray-100 p-1 w-10">성명</th>
+                <td className="border border-black p-1 text-center">{invoice.companies?.ceo_name || ''}</td>
+              </tr>
+              <tr>
+                <th className="border border-black bg-gray-100 p-1">사업장주소</th>
+                <td colSpan={3} className="border border-black p-1 text-[10px] leading-tight truncate max-w-[150px]">{invoice.companies?.address || ''}</td>
+              </tr>
+              <tr>
+                <th className="border border-black bg-gray-100 p-1">연락처</th>
+                <td colSpan={3} className="border border-black p-1">{invoice.companies?.contact || ''}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <table className="w-full border-collapse border border-black text-xs mb-2 table-fixed">
+          <thead>
+            <tr className="bg-gray-100 text-center font-bold">
+              <th className="p-1 border border-black w-8">No</th>
+              <th className="p-1 border border-black w-40">품목명</th>
+              <th className="p-1 border border-black w-24">규격</th>
+              <th className="p-1 border border-black w-10">수량</th>
+              <th className="p-1 border border-black w-20">단가</th>
+              <th className="p-1 border border-black w-20">공급가액</th>
+              <th className="p-1 border border-black w-20">세액</th>
+            </tr>
+          </thead>
+          <tbody>
+            {Array.from({ length: totalRows }).map((_, idx) => {
+              const item = items[idx];
+              
+              if (!item) {
+                return (
+                  <tr key={`empty-${idx}`} className="text-center h-6">
+                    <td className="border border-black text-transparent select-none">.</td>
+                    <td className="border border-black"></td>
+                    <td className="border border-black"></td>
+                    <td className="border border-black"></td>
+                    <td className="border border-black"></td>
+                    <td className="border border-black"></td>
+                    <td className="border border-black"></td>
+                  </tr>
+                );
+              }
+
+              const lineTotal = item.qty * item.price;
+              const supply = item.is_vat_included ? Math.round(lineTotal / 1.1) : lineTotal;
+              const vat = lineTotal - supply;
+              
+              return (
+                <tr key={item.id || idx} className="text-center h-6">
+                  <td className="border border-black">{idx + 1}</td>
+                  <td className="border border-black text-left px-2 truncate font-bold">{item.name}</td>
+                  <td className="border border-black text-left px-2 truncate text-[10px]">{item.spec || ''}</td>
+                  <td className="border border-black">{item.qty}</td>
+                  <td className="border border-black text-right px-1">{item.price.toLocaleString()}</td>
+                  <td className="border border-black text-right px-1 font-medium">{supply.toLocaleString()}</td>
+                  <td className="border border-black text-right px-1 text-gray-600">{vat.toLocaleString()}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+
+        <div className="flex justify-between items-end mt-auto pt-2 border-t-2 border-black">
+          <div className="flex items-center gap-2">
+            <span className="font-bold text-sm bg-gray-200 px-2 py-1 border border-black">총 합계금액</span>
+            <span className="font-extrabold text-lg tracking-widest pl-2">￦ {invoice.total_amount.toLocaleString()}</span>
+          </div>
+          <div className="text-xs font-bold flex items-center gap-2">
+            <span>인수자 :</span>
+            <div className="w-24 border-b border-black"></div>
+            <span>(서명/인)</span>
+          </div>
+        </div>
+
+      </div>
+    );
   };
 
   if (loading) return <div className="p-10 text-center">데이터를 불러오는 중입니다...</div>;
@@ -341,22 +448,22 @@ export default function InvoiceDetailPage() {
   return (
     <div className="p-4 md:p-8 bg-gray-100 min-h-screen text-black print:bg-white print:p-0">
       
+      {/* === 프린트 전용 CSS: 여백 완전 제거 및 컨테이너 강제 고정 === */}
       <style dangerouslySetInnerHTML={{
         __html: `
           @media print {
-            @page { size: A4 portrait; margin: 15mm; }
-            body { -webkit-print-color-adjust: exact; print-color-adjust: exact; background-color: white !important; }
-            table { page-break-inside: auto; }
-            tr    { page-break-inside: avoid; page-break-after: auto; }
-            thead { display: table-header-group; }
-            tfoot { display: table-footer-group; }
+            @page { size: A4 portrait; margin: 0 !important; } /* 브라우저 여백 완전 차단 */
+            body { margin: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; background-color: white !important; }
+            .print-container { width: 210mm; height: 297mm; padding: 12mm 15mm; box-sizing: border-box; overflow: hidden; page-break-inside: avoid; margin: 0 auto; }
+            .print-half { height: 132mm; overflow: hidden; display: flex; flex-direction: column; }
+            .print-cut { margin: 3mm 0; }
           }
         `
       }} />
 
       {/* 상단: 컨트롤 버튼 */}
       <div className="max-w-4xl mx-auto mb-4 flex justify-between items-center print:hidden bg-white p-4 shadow rounded-lg">
-        <button onClick={() => router.back()} className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 transition text-sm">
+        <button onClick={() => router.back()} className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 transition text-sm font-bold">
           ← 목록으로 돌아가기
         </button>
         <div className="space-x-2">
@@ -366,10 +473,10 @@ export default function InvoiceDetailPage() {
                 내용 수정하기
               </button>
               <button onClick={handleExcelExport} className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition font-bold text-sm">
-                엑셀(.xlsx) 다운로드
+                엑셀 다운로드
               </button>
-              <button onClick={handlePrint} className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition font-bold text-sm">
-                명세서 인쇄 (PDF)
+              <button onClick={handlePrint} className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 transition font-extrabold text-sm shadow-md animate-pulse hover:animate-none">
+                🖨️ 명세서 인쇄 (A4)
               </button>
             </>
           ) : (
@@ -387,7 +494,7 @@ export default function InvoiceDetailPage() {
 
       {isEditing ? (
         <div className="max-w-4xl mx-auto bg-white p-8 shadow-lg border-2 border-yellow-400 rounded-lg">
-          <h2 className="text-2xl font-bold mb-6 text-yellow-600 border-b pb-2">명세서 내용 수정 (문서번호: {invoice.invoice_no})</h2>
+          <h2 className="text-2xl font-bold mb-6 text-yellow-600 border-b pb-2">명세서 내용 수정</h2>
           
           <div className="overflow-x-auto">
             <table className="w-full mb-4 border-collapse min-w-[600px]">
@@ -395,9 +502,9 @@ export default function InvoiceDetailPage() {
                 <tr className="bg-gray-100 text-left text-sm">
                   <th className="p-2 border">품목 선택 (변경 시)</th>
                   <th className="p-2 border">품명 (직접입력)</th>
-                  <th className="p-2 border">수량</th>
-                  <th className="p-2 border">단가</th>
-                  <th className="p-2 border text-center">관리</th>
+                  <th className="p-2 border w-24">수량</th>
+                  <th className="p-2 border w-32">단가</th>
+                  <th className="p-2 border text-center w-16">관리</th>
                 </tr>
               </thead>
               <tbody>
@@ -453,77 +560,27 @@ export default function InvoiceDetailPage() {
               </tbody>
             </table>
           </div>
-          <button onClick={addEditItem} className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 transition text-sm">
+          <button onClick={addEditItem} className="bg-gray-800 text-white px-4 py-2 rounded hover:bg-gray-700 transition font-bold text-sm">
             + 품목 줄 추가
           </button>
         </div>
       ) : (
-        <div className="max-w-4xl mx-auto bg-white p-8 shadow-lg print:shadow-none print:max-w-none print:p-0">
-          <h1 className="text-3xl font-bold text-center mb-8 tracking-widest underline underline-offset-8 decoration-2">거래명세표</h1>
-          
-          <div className="flex justify-between mb-8 border-b-2 border-black pb-4">
-            <div className="w-1/2 pr-4">
-              <h2 className="font-bold text-lg mb-2">공급받는자</h2>
-              <p className="mb-1"><span className="font-semibold w-20 inline-block">상호:</span> {invoice.clients?.name}</p>
-              <p className="mb-1"><span className="font-semibold w-20 inline-block">사업자번호:</span> {invoice.clients?.business_number || '-'}</p>
-              <p className="mb-1"><span className="font-semibold w-20 inline-block">주소:</span> {invoice.clients?.address || '-'}</p>
-              <p className="mb-1"><span className="font-semibold w-20 inline-block">연락처:</span> {invoice.clients?.contact || '-'}</p>
+        /* === 실무용 양식 화면 (2장 연속 렌더링, 인쇄 컨테이너 적용) === */
+        <div className="max-w-4xl mx-auto flex flex-col items-center print-container">
+          <div className="w-full max-w-[210mm]">
+            {renderInvoiceHalf('공급자 보관용')}
+            
+            {/* 중간 절취선 */}
+            <div className="w-full border-b-2 border-dashed border-gray-400 relative my-2 print-cut">
+              <span className="absolute left-1/2 top-1/2 -translate-y-1/2 -translate-x-1/2 bg-gray-100 print:bg-white px-4 text-gray-500 font-bold text-sm">✂ 절취선 ✂</span>
             </div>
-            <div className="w-1/2 pl-4 border-l-2 border-gray-300">
-              <h2 className="font-bold text-lg mb-2">공급자</h2>
-              <p className="mb-1"><span className="font-semibold w-20 inline-block">상호:</span> {invoice.companies?.name}</p>
-              <p className="mb-1"><span className="font-semibold w-20 inline-block">사업자번호:</span> {invoice.companies?.business_number || '-'}</p>
-              <p className="mb-1"><span className="font-semibold w-20 inline-block">발행일자:</span> {invoice.issue_date}</p>
-              <p className="mb-1"><span className="font-semibold w-20 inline-block">문서번호:</span> {invoice.invoice_no}</p>
-            </div>
-          </div>
 
-          <table className="w-full mb-8 border-collapse border border-black">
-            <thead>
-              <tr className="bg-gray-100 text-center font-bold">
-                <th className="p-2 border border-black w-1/12">No.</th>
-                <th className="p-2 border border-black w-4/12">품명</th>
-                <th className="p-2 border border-black w-2/12">규격</th>
-                <th className="p-2 border border-black w-1/12">수량</th>
-                <th className="p-2 border border-black w-2/12">단가</th>
-                <th className="p-2 border border-black w-2/12">공급가액</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((item, idx) => (
-                <tr key={item.id} className="text-sm">
-                  <td className="p-2 border border-black text-center">{idx + 1}</td>
-                  <td className="p-2 border border-black">{item.name}</td>
-                  <td className="p-2 border border-black text-center">{item.spec || '-'}</td>
-                  <td className="p-2 border border-black text-center">{item.qty}</td>
-                  <td className="p-2 border border-black text-right">{item.price.toLocaleString()}</td>
-                  <td className="p-2 border border-black text-right font-medium">{(item.qty * item.price).toLocaleString()}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          <div className="flex justify-end border-t-2 border-black pt-4">
-            <div className="w-1/2">
-              <div className="flex justify-between mb-2">
-                <span className="font-bold">공급가액:</span>
-                <span>{invoice.supply_amount.toLocaleString()}원</span>
-              </div>
-              <div className="flex justify-between mb-2">
-                <span className="font-bold">부가세:</span>
-                <span>{invoice.vat_amount.toLocaleString()}원</span>
-              </div>
-              <div className="flex justify-between mt-4 pt-2 border-t border-gray-400 text-xl">
-                <span className="font-extrabold">총 청구액:</span>
-                <span className="font-extrabold text-blue-800">{invoice.total_amount.toLocaleString()}원</span>
-              </div>
-            </div>
+            {renderInvoiceHalf('공급받는자 보관용')}
           </div>
-          
         </div>
       )}
 
-      {/* === 신규 추가: 첨부파일 관리 영역 (인쇄 시 숨김) === */}
+      {/* 첨부파일 관리 영역 (인쇄 시 숨김) */}
       {!isEditing && (
         <div className="max-w-4xl mx-auto mt-6 bg-white p-6 shadow-lg rounded-lg print:hidden border border-gray-200">
           <div className="flex justify-between items-center mb-4 border-b pb-2">
@@ -531,7 +588,6 @@ export default function InvoiceDetailPage() {
               <span className="mr-2 text-xl">📎</span> 첨부파일 관리 (도면, 영수증, 문서 등)
             </h3>
             
-            {/* 파일 업로드 버튼 */}
             <label className={`cursor-pointer bg-blue-50 text-blue-700 hover:bg-blue-100 font-bold py-2 px-4 rounded border border-blue-200 transition ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
               {isUploading ? '업로드 중...' : '+ 파일 추가'}
               <input 
@@ -543,7 +599,6 @@ export default function InvoiceDetailPage() {
             </label>
           </div>
 
-          {/* 첨부파일 리스트 */}
           {attachments.length === 0 ? (
             <p className="text-gray-500 text-sm py-4 text-center">등록된 첨부파일이 없습니다.</p>
           ) : (
