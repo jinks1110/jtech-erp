@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation'; // 신규: 페이지 이동을 위한 라우터
+import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 
 interface Attachment {
@@ -14,18 +14,19 @@ interface Attachment {
 }
 
 export default function MainPage() {
-  const router = useRouter(); // 라우터 초기화
+  const router = useRouter();
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  // 공용 첨부파일 불러오기
-  const fetchAttachments = async () => {
+  const [yearlySales, setYearlySales] = useState(0);
+  const [monthlySales, setMonthlySales] = useState(0);
+
+  const fetchDashboardData = async () => {
     try {
       setLoading(true);
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
       
-      // 세션이 없으면 로그인 페이지로 강제 이동 (보안 강화)
       if (sessionError || !session) {
         router.push('/login');
         return;
@@ -34,27 +35,55 @@ export default function MainPage() {
       const { data: profile } = await supabase.from('profiles').select('company_id').eq('id', session.user.id).single();
       if (!profile) return;
 
-      const { data, error } = await supabase
+      const { data: attachData, error: attachError } = await supabase
         .from('attachments')
         .select('*')
         .eq('company_id', profile.company_id)
         .is('invoice_id', null) 
         .order('created_at', { ascending: false });
 
-      if (error) throw error;
-      setAttachments(data || []);
+      if (!attachError && attachData) {
+        setAttachments(attachData);
+      }
+
+      const currentYear = new Date().getFullYear();
+      const currentMonth = new Date().getMonth() + 1; 
+      const startDate = `${currentYear}-01-01T00:00:00Z`;
+      
+      const { data: invoiceData, error: invoiceError } = await supabase
+        .from('invoices')
+        .select('created_at, supply_amount') 
+        .eq('company_id', profile.company_id)
+        .gte('created_at', startDate);
+
+      if (!invoiceError && invoiceData) {
+        let yearly = 0;
+        let monthly = 0;
+
+        invoiceData.forEach(inv => {
+          yearly += inv.supply_amount || 0;
+          
+          const invMonth = new Date(inv.created_at).getMonth() + 1;
+          if (invMonth === currentMonth) {
+            monthly += inv.supply_amount || 0;
+          }
+        });
+
+        setYearlySales(yearly);
+        setMonthlySales(monthly);
+      }
+
     } catch (error) {
-      console.error("파일 불러오기 에러:", error);
+      console.error("데이터 불러오기 에러:", error);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchAttachments();
+    fetchDashboardData();
   }, []);
 
-  // 공용 파일 업로드
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     try {
       if (!e.target.files || e.target.files.length === 0) return;
@@ -82,7 +111,7 @@ export default function MainPage() {
 
       if (dbError) throw dbError;
       
-      fetchAttachments();
+      fetchDashboardData();
       alert('공용 문서가 성공적으로 등록되었습니다.');
 
     } catch (error: any) {
@@ -93,29 +122,24 @@ export default function MainPage() {
     }
   };
 
-  // 공용 파일 삭제
   const handleDeleteFile = async (id: string, filePath: string) => {
     if (!window.confirm('이 공용 문서를 삭제하시겠습니까?')) return;
     try {
       await supabase.storage.from('attachments').remove([filePath]);
       const { error } = await supabase.from('attachments').delete().eq('id', id);
       if (error) throw error;
-      fetchAttachments();
+      fetchDashboardData();
     } catch (error) {
       alert('삭제에 실패했습니다.');
     }
   };
 
-  // === 신규 추가: 철통 보안 로그아웃 기능 ===
   const handleLogout = async () => {
     if (!window.confirm('ERP 시스템에서 로그아웃 하시겠습니까?')) return;
     
     try {
-      // 1. Supabase 서버에 세션 파기 요청 및 로컬 금고(Token) 삭제
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
-      
-      // 2. 로그인 페이지로 즉시 튕겨냄
       router.push('/login');
     } catch (error: any) {
       alert('로그아웃 처리 중 문제가 발생했습니다.');
@@ -127,21 +151,47 @@ export default function MainPage() {
     <div className="min-h-screen bg-gray-100 p-4 md:p-8 text-black">
       <div className="max-w-6xl mx-auto space-y-6 md:space-y-8">
         
-        {/* 상단 환영 헤더 & 로그아웃 버튼 */}
+        {/* 상단 환영 헤더 & 설정/로그아웃 버튼 */}
         <header className="bg-white p-4 md:p-6 rounded-lg shadow-md flex flex-col md:flex-row justify-between items-start md:items-center border-l-4 border-blue-600 gap-4">
           <div>
             <h1 className="text-2xl md:text-3xl font-extrabold text-gray-900">J-TECH 통합 ERP 시스템</h1>
             <p className="text-sm md:text-base text-gray-500 mt-1 font-medium">환영합니다! 원하시는 업무를 선택해주세요.</p>
           </div>
           
-          {/* 로그아웃 버튼 (모바일에서는 화면 꽉 차게, PC에서는 우측에 예쁘게) */}
-          <button 
-            onClick={handleLogout}
-            className="w-full md:w-auto bg-gray-100 hover:bg-red-50 text-gray-700 hover:text-red-600 font-bold py-2 md:py-3 px-6 rounded-lg border border-gray-300 hover:border-red-300 transition shadow-sm flex items-center justify-center gap-2"
-          >
-            <span>🔒</span> 로그아웃
-          </button>
+          {/* === 수정된 버튼 영역: 내 회사 설정 버튼 추가 === */}
+          <div className="flex w-full md:w-auto gap-2">
+            <Link 
+              href="/company"
+              className="flex-1 md:flex-none bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold py-2 md:py-3 px-4 md:px-6 rounded-lg border border-blue-200 transition shadow-sm flex items-center justify-center gap-2"
+            >
+              <span>⚙️</span> <span className="hidden md:inline">내 회사 설정</span><span className="md:hidden">설정</span>
+            </Link>
+            <button 
+              onClick={handleLogout}
+              className="flex-1 md:flex-none bg-gray-100 hover:bg-red-50 text-gray-700 hover:text-red-600 font-bold py-2 md:py-3 px-4 md:px-6 rounded-lg border border-gray-300 hover:border-red-300 transition shadow-sm flex items-center justify-center gap-2"
+            >
+              <span>🔒</span> 로그아웃
+            </button>
+          </div>
         </header>
+
+        {/* 매출 요약 대시보드 */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
+          <div className="bg-white p-6 rounded-lg shadow-md border-l-4 border-indigo-500 flex items-center justify-between transition hover:shadow-lg">
+            <div>
+              <p className="text-sm md:text-base font-bold text-gray-500 mb-1">{new Date().getFullYear()}년 누적 순매출액 (공급가)</p>
+              <p className="text-3xl md:text-4xl font-extrabold text-gray-900">{yearlySales.toLocaleString()}<span className="text-xl md:text-2xl text-gray-600 font-bold ml-1">원</span></p>
+            </div>
+            <div className="text-5xl opacity-20">📈</div>
+          </div>
+          <div className="bg-white p-6 rounded-lg shadow-md border-l-4 border-teal-500 flex items-center justify-between transition hover:shadow-lg">
+            <div>
+              <p className="text-sm md:text-base font-bold text-gray-500 mb-1">{new Date().getMonth() + 1}월 당월 순매출액 (공급가)</p>
+              <p className="text-3xl md:text-4xl font-extrabold text-teal-700">{monthlySales.toLocaleString()}<span className="text-xl md:text-2xl text-teal-600 font-bold ml-1">원</span></p>
+            </div>
+            <div className="text-5xl opacity-20">💰</div>
+          </div>
+        </div>
 
         {/* 4대 핵심 메뉴 바로가기 */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
@@ -167,7 +217,7 @@ export default function MainPage() {
           </Link>
         </div>
 
-        {/* 공용 자료실 (첨부파일) */}
+        {/* 공용 자료실 */}
         <div className="bg-white p-4 md:p-6 rounded-lg shadow-md border border-gray-200">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 border-b pb-4 gap-4">
             <div>
