@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation'; // 신규: 페이지 이동을 위한 라우터
 import { supabase } from '@/lib/supabase';
 
 interface Attachment {
@@ -13,21 +14,26 @@ interface Attachment {
 }
 
 export default function MainPage() {
+  const router = useRouter(); // 라우터 초기화
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  // 공용 첨부파일 불러오기 (명세서 번호가 없는 파일만)
+  // 공용 첨부파일 불러오기
   const fetchAttachments = async () => {
     try {
       setLoading(true);
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      
+      // 세션이 없으면 로그인 페이지로 강제 이동 (보안 강화)
+      if (sessionError || !session) {
+        router.push('/login');
+        return;
+      }
 
       const { data: profile } = await supabase.from('profiles').select('company_id').eq('id', session.user.id).single();
       if (!profile) return;
 
-      // 핵심: 우리 회사의 파일 중 '특정 명세서(invoice_id)에 묶이지 않은 순수 공용 파일'만 불러옴
       const { data, error } = await supabase
         .from('attachments')
         .select('*')
@@ -67,7 +73,6 @@ export default function MainPage() {
 
       const { data: urlData } = supabase.storage.from('attachments').getPublicUrl(filePath);
 
-      // 명세서 ID 없이, 회사 ID만 꼬리표로 달아서 저장 (공용 문서 처리)
       const { error: dbError } = await supabase.from('attachments').insert([{
         company_id: profile!.company_id,
         file_name: file.name,
@@ -101,20 +106,45 @@ export default function MainPage() {
     }
   };
 
+  // === 신규 추가: 철통 보안 로그아웃 기능 ===
+  const handleLogout = async () => {
+    if (!window.confirm('ERP 시스템에서 로그아웃 하시겠습니까?')) return;
+    
+    try {
+      // 1. Supabase 서버에 세션 파기 요청 및 로컬 금고(Token) 삭제
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+      
+      // 2. 로그인 페이지로 즉시 튕겨냄
+      router.push('/login');
+    } catch (error: any) {
+      alert('로그아웃 처리 중 문제가 발생했습니다.');
+      console.error(error.message);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-100 p-4 md:p-8 text-black">
-      <div className="max-w-6xl mx-auto space-y-8">
+      <div className="max-w-6xl mx-auto space-y-6 md:space-y-8">
         
-        {/* 상단 환영 헤더 */}
-        <header className="bg-white p-6 rounded-lg shadow-md flex justify-between items-center border-l-4 border-blue-600">
+        {/* 상단 환영 헤더 & 로그아웃 버튼 */}
+        <header className="bg-white p-4 md:p-6 rounded-lg shadow-md flex flex-col md:flex-row justify-between items-start md:items-center border-l-4 border-blue-600 gap-4">
           <div>
-            <h1 className="text-3xl font-extrabold text-gray-900">J-TECH 통합 ERP 시스템</h1>
-            <p className="text-gray-500 mt-1 font-medium">환영합니다! 원하시는 업무를 선택해주세요.</p>
+            <h1 className="text-2xl md:text-3xl font-extrabold text-gray-900">J-TECH 통합 ERP 시스템</h1>
+            <p className="text-sm md:text-base text-gray-500 mt-1 font-medium">환영합니다! 원하시는 업무를 선택해주세요.</p>
           </div>
+          
+          {/* 로그아웃 버튼 (모바일에서는 화면 꽉 차게, PC에서는 우측에 예쁘게) */}
+          <button 
+            onClick={handleLogout}
+            className="w-full md:w-auto bg-gray-100 hover:bg-red-50 text-gray-700 hover:text-red-600 font-bold py-2 md:py-3 px-6 rounded-lg border border-gray-300 hover:border-red-300 transition shadow-sm flex items-center justify-center gap-2"
+          >
+            <span>🔒</span> 로그아웃
+          </button>
         </header>
 
         {/* 4대 핵심 메뉴 바로가기 */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
           <Link href="/clients" className="bg-white p-6 rounded-lg shadow hover:shadow-xl transition transform hover:-translate-y-1 group border border-transparent hover:border-gray-200">
             <div className="text-4xl mb-4 group-hover:scale-110 transition inline-block">🏢</div>
             <h2 className="text-xl font-bold text-gray-800">거래처 관리</h2>
@@ -137,16 +167,16 @@ export default function MainPage() {
           </Link>
         </div>
 
-        {/* 신규: 공용 자료실 (첨부파일) */}
-        <div className="bg-white p-6 rounded-lg shadow-md border border-gray-200">
+        {/* 공용 자료실 (첨부파일) */}
+        <div className="bg-white p-4 md:p-6 rounded-lg shadow-md border border-gray-200">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 border-b pb-4 gap-4">
             <div>
-              <h2 className="text-2xl font-bold text-gray-800 flex items-center">
+              <h2 className="text-xl md:text-2xl font-bold text-gray-800 flex items-center">
                 <span className="mr-2">📁</span> J-TECH 공용 자료실
               </h2>
               <p className="text-sm text-gray-500 mt-1">사업자등록증, 통장사본, 제품 카탈로그 등 자주 쓰는 문서를 보관하세요.</p>
             </div>
-            <label className={`cursor-pointer whitespace-nowrap bg-blue-600 text-white hover:bg-blue-700 font-bold py-3 px-6 rounded shadow transition ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
+            <label className={`w-full md:w-auto text-center cursor-pointer whitespace-nowrap bg-blue-600 text-white hover:bg-blue-700 font-bold py-3 px-6 rounded shadow transition ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
               {isUploading ? '업로드 중...' : '+ 새 문서 등록'}
               <input type="file" className="hidden" onChange={handleFileUpload} disabled={isUploading} />
             </label>

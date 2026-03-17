@@ -39,7 +39,6 @@ export default function InvoicePage() {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session) return;
 
-        // TS 문법 오류 해결: data의 타입을 명확히 지정하여 의심을 없앰
         const { data, error: profileError } = await supabase
           .from('profiles')
           .select('company_id')
@@ -77,6 +76,13 @@ export default function InvoicePage() {
   }, []);
 
   const addItem = () => setItems([...items, { product_id: '', name: '', spec: '', qty: 0, price: 0, is_vat_included: false }]);
+
+  const removeItem = (index: number) => {
+    if (items.length === 1) return;
+    const newItems = [...items];
+    newItems.splice(index, 1);
+    setItems(newItems);
+  };
 
   const handleProductSelect = (index: number, productId: string) => {
     const selectedProduct = products.find(p => p.id === productId);
@@ -136,7 +142,6 @@ export default function InvoicePage() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error('로그인 세션 만료');
 
-      // TS 문법 오류 해결: 저장할 때도 profile의 타입을 명확하게 지정
       const { data, error: profileError } = await supabase
         .from('profiles')
         .select('company_id')
@@ -158,7 +163,7 @@ export default function InvoicePage() {
       const { data: invoiceData, error: invoiceError } = await supabase
         .from('invoices')
         .insert([{
-          company_id: profile.company_id, // 이제 여기서 빨간 줄이 절대 뜨지 않습니다!
+          company_id: profile.company_id,
           client_id: selectedClientId,
           invoice_no: generatedInvoiceNo,
           supply_amount: supplyTotal,
@@ -196,13 +201,13 @@ export default function InvoicePage() {
 
   return (
     <div className="p-4 md:p-8 bg-gray-50 min-h-screen text-black">
-      <div className="max-w-4xl mx-auto bg-white p-6 shadow-lg rounded-lg" id="invoice-area">
-        <h1 className="text-2xl font-bold mb-6 border-b pb-2">J-TECH 명세서 시스템</h1>
+      <div className="max-w-4xl mx-auto bg-white p-4 md:p-6 shadow-lg rounded-lg" id="invoice-area">
+        <h1 className="text-xl md:text-2xl font-bold mb-4 md:mb-6 border-b pb-2">J-TECH 명세서 시스템</h1>
         
         <div className="mb-6">
-          <label className="block text-sm font-medium mb-1">거래처명</label>
+          <label className="block text-sm font-bold text-gray-700 mb-2">거래처명</label>
           <select 
-            className="w-full border rounded p-2 outline-none focus:border-blue-500 bg-white" 
+            className="w-full border-2 border-gray-200 rounded-lg p-3 outline-none focus:border-blue-500 bg-white text-base md:text-sm transition shadow-sm" 
             value={selectedClientId} 
             onChange={(e) => setSelectedClientId(e.target.value)}
           >
@@ -213,22 +218,28 @@ export default function InvoicePage() {
           </select>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full mb-4 border-collapse min-w-[600px]">
+        {/* =========================================
+            모바일 최적화 영역 (화면 크기에 따라 뷰가 다름)
+            ========================================= */}
+
+        {/* 1. 데스크탑 뷰 (표 형식 - md 사이즈 이상에서만 보임) */}
+        <div className="hidden md:block overflow-x-auto mb-4">
+          <table className="w-full border-collapse min-w-[600px]">
             <thead>
-              <tr className="bg-gray-100 text-left text-sm">
-                <th className="p-2 border">품목 선택 (비활성 숨김)</th>
-                <th className="p-2 border w-24">수량</th>
-                <th className="p-2 border w-32 text-right">단가</th>
-                <th className="p-2 border w-32 text-right">합계</th>
+              <tr className="bg-gray-100 text-left text-sm border-b-2 border-gray-200">
+                <th className="p-3 border-x">품목 선택 (비활성 숨김)</th>
+                <th className="p-3 border-x w-24 text-center">수량</th>
+                <th className="p-3 border-x w-32 text-right">단가</th>
+                <th className="p-3 border-x w-32 text-right">합계</th>
+                <th className="p-3 border-x w-16 text-center">관리</th>
               </tr>
             </thead>
             <tbody>
               {items.map((item, idx) => (
-                <tr key={idx} className="text-sm">
-                  <td className="border p-2">
+                <tr key={idx} className="text-sm border-b">
+                  <td className="border-x p-2">
                     <select 
-                      className="w-full outline-none bg-transparent"
+                      className="w-full outline-none bg-transparent p-1"
                       value={item.product_id}
                       onChange={(e) => handleProductSelect(idx, e.target.value)}
                     >
@@ -238,8 +249,8 @@ export default function InvoicePage() {
                       ))}
                     </select>
                   </td>
-                  <td className="border p-2">
-                    <input type="number" className="w-full outline-none text-right" 
+                  <td className="border-x p-2">
+                    <input type="number" className="w-full outline-none text-center p-1" 
                       value={item.qty === 0 ? '' : item.qty}
                       onChange={(e) => {
                         const newItems = [...items];
@@ -249,14 +260,19 @@ export default function InvoicePage() {
                       placeholder="0"
                     />
                   </td>
-                  <td className="border p-2">
-                    <input type="number" className="w-full outline-none text-right bg-gray-50" 
+                  <td className="border-x p-2">
+                    <input type="number" className="w-full outline-none text-right bg-gray-50 p-1" 
                       value={item.price === 0 ? '' : item.price}
                       readOnly
                     />
                   </td>
-                  <td className="border p-2 text-right font-medium">
+                  <td className="border-x p-2 text-right font-bold text-gray-700">
                     {(item.qty * item.price).toLocaleString()}원
+                  </td>
+                  <td className="border-x p-2 text-center">
+                    {items.length > 1 && (
+                      <button onClick={() => removeItem(idx)} className="text-red-500 font-bold hover:bg-red-50 px-2 py-1 rounded">X</button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -264,27 +280,88 @@ export default function InvoicePage() {
           </table>
         </div>
 
-        <div className="flex justify-between items-center mb-6 print:hidden border-b pb-6">
-          <button onClick={addItem} className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 transition text-sm">
-            + 품목 줄 추가
+        {/* 2. 모바일 뷰 (카드 형식 - md 사이즈 미만에서만 보임) */}
+        <div className="md:hidden space-y-4 mb-4">
+          <label className="block text-sm font-bold text-gray-700 mb-2">명세서 품목 내역</label>
+          {items.map((item, idx) => (
+            <div key={idx} className="bg-white border-2 border-gray-200 rounded-xl p-4 shadow-sm relative">
+              {/* 항목 삭제 버튼 (우측 상단) */}
+              {items.length > 1 && (
+                <button 
+                  onClick={() => removeItem(idx)} 
+                  className="absolute top-3 right-3 text-red-500 bg-red-50 w-8 h-8 rounded-full font-bold flex items-center justify-center"
+                >
+                  X
+                </button>
+              )}
+              
+              <div className="mb-3 pr-8">
+                <label className="text-xs font-bold text-gray-500 block mb-1">품목 선택 (항목 {idx + 1})</label>
+                <select 
+                  className="w-full border rounded-lg p-2.5 outline-none focus:border-blue-500 bg-gray-50 text-base"
+                  value={item.product_id}
+                  onChange={(e) => handleProductSelect(idx, e.target.value)}
+                >
+                  <option value="">터치하여 품목 선택</option>
+                  {products.map(p => (
+                    <option key={p.id} value={p.id}>{p.name} {p.spec ? `(${p.spec})` : ''}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex gap-3 mb-3">
+                <div className="flex-1">
+                  <label className="text-xs font-bold text-gray-500 block mb-1">수량</label>
+                  <input type="number" className="w-full border rounded-lg p-2.5 outline-none focus:border-blue-500 text-center text-base" 
+                    value={item.qty === 0 ? '' : item.qty}
+                    onChange={(e) => {
+                      const newItems = [...items];
+                      newItems[idx].qty = Number(e.target.value);
+                      setItems(newItems);
+                    }}
+                    placeholder="0"
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="text-xs font-bold text-gray-500 block mb-1">단가 (원)</label>
+                  <input type="number" className="w-full border rounded-lg p-2.5 outline-none bg-gray-100 text-right text-gray-500 text-base" 
+                    value={item.price === 0 ? '' : item.price}
+                    readOnly
+                  />
+                </div>
+              </div>
+
+              <div className="text-right border-t border-dashed pt-3 mt-2">
+                <span className="text-xs text-gray-500 mr-2">합계금액</span>
+                <span className="font-bold text-blue-700 text-lg">{(item.qty * item.price).toLocaleString()}원</span>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* ========================================= */}
+
+        <div className="flex flex-col md:flex-row justify-between items-center mb-6 print:hidden border-b pb-6 gap-4">
+          {/* 모바일에서는 버튼이 화면 꽉 차게 커집니다 */}
+          <button onClick={addItem} className="w-full md:w-auto bg-gray-800 text-white px-6 py-3 rounded-lg hover:bg-gray-700 transition font-bold shadow">
+            + 품목 한 줄 더 추가하기
           </button>
           
-          <div className="space-x-2">
-            <button onClick={handleSave} disabled={isSaving} className={`px-4 py-2 rounded text-white font-bold transition text-sm ${isSaving ? 'bg-blue-400' : 'bg-blue-600 hover:bg-blue-700'}`}>
+          <div className="flex flex-col md:flex-row w-full md:w-auto gap-2 md:space-x-2">
+            <button onClick={handleSave} disabled={isSaving} className={`w-full md:w-auto px-6 py-3 rounded-lg text-white font-bold transition shadow ${isSaving ? 'bg-blue-400' : 'bg-blue-600 hover:bg-blue-700'}`}>
               {isSaving ? '저장 중...' : 'DB에 명세서 저장'}
             </button>
-            {/* 여기 인쇄 버튼은 엑셀이나 임시 출력용이므로 그대로 둡니다 */}
-            <button onClick={handlePrint} className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition font-bold text-sm">
+            <button onClick={handlePrint} className="w-full md:w-auto bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 transition font-bold shadow">
               화면 인쇄 (임시)
             </button>
           </div>
         </div>
 
-        <div className="text-right space-y-1">
-          <div className="text-gray-600">공급가액: {supplyTotal.toLocaleString()}원</div>
-          <div className="text-gray-600">부가세: {vatTotal.toLocaleString()}원</div>
-          <div className="text-2xl font-bold pt-2">
-            총 합계 금액: <span className="text-blue-600">{grandTotal.toLocaleString()}원</span>
+        <div className="text-right space-y-2 bg-gray-50 p-4 md:p-6 rounded-lg border border-gray-200">
+          <div className="text-gray-600 font-medium">공급가액: <span className="text-black">{supplyTotal.toLocaleString()}원</span></div>
+          <div className="text-gray-600 font-medium">부가세: <span className="text-black">{vatTotal.toLocaleString()}원</span></div>
+          <div className="text-2xl md:text-3xl font-extrabold pt-3 border-t border-gray-300 mt-2">
+            총 청구액: <span className="text-blue-700">{grandTotal.toLocaleString()}원</span>
           </div>
         </div>
       </div>
