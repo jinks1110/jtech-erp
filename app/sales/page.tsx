@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import * as XLSX from 'xlsx';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation'; // 신규: 페이지 이동을 위한 라우터 추가
 
 interface Client {
   id: string;
@@ -28,6 +29,7 @@ interface Invoice {
 }
 
 export default function SalesPage() {
+  const router = useRouter(); // 신규 라우터
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
@@ -199,6 +201,63 @@ export default function SalesPage() {
     window.print();
   };
 
+  // === 신규: 리스트 화면에서 다이렉트로 복사하는 함수 ===
+  const handleCopyInvoiceList = async (invoiceId: string) => {
+    if (!window.confirm('이 명세서를 복사하여 새 명세서를 작성하시겠습니까?\n(작성일자는 오늘 날짜로 자동 세팅됩니다.)')) return;
+
+    try {
+      // 1. 원본 명세서의 상세 정보 가져오기 (리스트에는 품목의 상세 단가가 없으므로 DB에서 직접 호출)
+      const { data: oldInvoice, error: invError } = await supabase.from('invoices').select('*').eq('id', invoiceId).single();
+      if (invError) throw invError;
+
+      // 2. 원본 명세서의 품목 리스트 가져오기
+      const { data: oldItems, error: itemsError } = await supabase.from('invoice_items').select('*').eq('invoice_id', invoiceId);
+      if (itemsError) throw itemsError;
+
+      // 3. 새로운 명세서 번호 채번
+      const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const randomStr = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+      const generatedInvoiceNo = `INV-${dateStr}-${randomStr}`;
+
+      // 4. 새 명세서 생성
+      const { data: newInvoice, error: insertInvError } = await supabase
+        .from('invoices')
+        .insert([{
+          company_id: oldInvoice.company_id,
+          client_id: oldInvoice.client_id,
+          invoice_no: generatedInvoiceNo,
+          supply_amount: oldInvoice.supply_amount,
+          vat_amount: oldInvoice.vat_amount,
+          total_amount: oldInvoice.total_amount
+        }])
+        .select()
+        .single();
+
+      if (insertInvError) throw insertInvError;
+
+      // 5. 새 명세서에 품목 복사
+      const itemsToInsert = oldItems.map(item => ({
+        invoice_id: newInvoice.id,
+        product_id: item.product_id,
+        name: item.name,
+        spec: item.spec,
+        qty: item.qty,
+        price: item.price
+      }));
+
+      const { error: insertItemsError } = await supabase.from('invoice_items').insert(itemsToInsert);
+      if (insertItemsError) throw insertItemsError;
+
+      alert('명세서가 성공적으로 복사되었습니다!\n복사된 새 명세서 화면으로 이동합니다.');
+      // 6. 복사된 새 명세서 상세페이지로 이동
+      router.push(`/sales/${newInvoice.id}`);
+
+    } catch (error: any) {
+      alert('명세서 복사에 실패했습니다.');
+      console.error(error);
+    }
+  };
+
   const handleDeleteInvoice = async (invoiceId: string) => {
     if (!window.confirm('정말 이 명세서를 삭제하시겠습니까?\n(경고: 관련된 품목 내역도 함께 영구 삭제되며 복구할 수 없습니다.)')) {
       return;
@@ -233,11 +292,10 @@ export default function SalesPage() {
   return (
     <div className="min-h-screen bg-gray-50 p-4 md:p-8 text-black print:bg-white print:p-0">
       
-      {/* 프린트용 CSS: 여백 축소 및 페이지 넘김 완벽 차단 */}
       <style dangerouslySetInnerHTML={{
         __html: `
           @media print {
-            @page { size: A4 landscape; margin: 10mm; } 
+            @page { size: A4 landscape; margin: 15mm; } 
             body { background-color: white !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
             .print-table-wrapper { page-break-inside: avoid; }
           }
@@ -342,8 +400,10 @@ export default function SalesPage() {
                         <td className="p-3 text-right whitespace-nowrap">{inv.supply_amount.toLocaleString()}원</td>
                         <td className="p-3 text-right text-gray-500 whitespace-nowrap">{inv.vat_amount.toLocaleString()}원</td>
                         <td className="p-3 text-right font-bold text-green-700 whitespace-nowrap">{inv.total_amount.toLocaleString()}원</td>
+                        {/* === 수정: 보기, 복사, 삭제 버튼 3개로 배치 === */}
                         <td className="p-3 text-center space-x-1 whitespace-nowrap">
                           <Link href={`/sales/${inv.id}`} className="inline-block text-blue-600 hover:text-blue-800 font-bold px-2 py-1 border border-blue-200 rounded bg-white text-xs hover:bg-blue-50 transition">보기</Link>
+                          <button onClick={() => handleCopyInvoiceList(inv.id)} className="inline-block text-purple-600 hover:text-purple-800 font-bold px-2 py-1 border border-purple-200 rounded bg-white text-xs hover:bg-purple-50 transition">복사</button>
                           <button onClick={() => handleDeleteInvoice(inv.id)} className="inline-block text-red-500 hover:text-red-700 font-bold px-2 py-1 border border-red-200 rounded bg-white text-xs hover:bg-red-50 transition">삭제</button>
                         </td>
                       </tr>
@@ -371,9 +431,11 @@ export default function SalesPage() {
                       </div>
                       <div className="text-right flex flex-col items-end">
                         <p className="font-extrabold text-xl text-green-700 mb-2">{inv.total_amount.toLocaleString()}원</p>
-                        <div className="flex gap-2">
+                        {/* === 수정: 모바일 뷰도 복사 버튼 추가 === */}
+                        <div className="flex gap-2 mt-2">
                           <button onClick={() => handleDeleteInvoice(inv.id)} className="bg-red-50 text-red-600 border border-red-200 px-3 py-2 rounded-lg text-sm font-bold transition hover:bg-red-100">삭제</button>
-                          <Link href={`/sales/${inv.id}`} className="bg-blue-50 text-blue-700 border border-blue-200 px-3 py-2 rounded-lg text-sm font-bold text-center transition hover:bg-blue-100">명세서 열기</Link>
+                          <button onClick={() => handleCopyInvoiceList(inv.id)} className="bg-purple-50 text-purple-700 border border-purple-200 px-3 py-2 rounded-lg text-sm font-bold transition hover:bg-purple-100">복사</button>
+                          <Link href={`/sales/${inv.id}`} className="bg-blue-50 text-blue-700 border border-blue-200 px-3 py-2 rounded-lg text-sm font-bold text-center transition hover:bg-blue-100">보기</Link>
                         </div>
                       </div>
                     </div>
@@ -385,9 +447,7 @@ export default function SalesPage() {
         </div>
       </div>
 
-      {/* ==============================================
-          2. 인쇄 전용 화면 (안내 문구를 tbody에 병합하여 절대 안 찢어짐)
-          ============================================== */}
+      {/* 인쇄 전용 화면 (변경 없음) */}
       <div className="hidden print:block w-full max-w-none text-black print-table-wrapper">
         <h1 className="text-3xl font-extrabold text-center mb-6 tracking-widest underline underline-offset-8 decoration-2">매 출 원 장</h1>
         
@@ -401,15 +461,15 @@ export default function SalesPage() {
           </div>
         </div>
 
-        <table className="w-full border-collapse border border-black text-xs">
+        <table className="w-full border-collapse border border-black text-xs mb-2">
           <thead>
             <tr className="bg-gray-100 text-center font-bold">
-              <th className="border border-black p-2 w-20">일자</th>
-              <th className="border border-black p-2 w-32">거래처명</th>
+              <th className="border border-black p-2 w-16">일자</th>
+              <th className="border border-black p-2 w-28">거래처명</th>
               <th className="border border-black p-2">품목 상세내역 (수량)</th>
-              <th className="border border-black p-2 w-24">공급가액</th>
-              <th className="border border-black p-2 w-24">세액</th>
-              <th className="border border-black p-2 w-28">합계금액</th>
+              <th className="border border-black p-2 w-20">공급가액</th>
+              <th className="border border-black p-2 w-16">세액</th>
+              <th className="border border-black p-2 w-24">합계금액</th>
             </tr>
           </thead>
           <tbody>
@@ -423,14 +483,12 @@ export default function SalesPage() {
                 <td className="border border-black p-2 text-right font-bold text-gray-900">{inv.total_amount.toLocaleString()}</td>
               </tr>
             ))}
-            {/* 총 합계도 tbody 내부로 흡수 */}
             <tr className="bg-gray-200 font-extrabold text-sm border-t-2 border-black">
               <td colSpan={3} className="border border-black p-3 text-center tracking-widest">총 합 계</td>
               <td className="border border-black p-3 text-right">{totalSupply.toLocaleString()}</td>
               <td className="border border-black p-3 text-right">{totalVat.toLocaleString()}</td>
               <td className="border border-black p-3 text-right">{grandTotal.toLocaleString()}</td>
             </tr>
-            {/* 안내 문구도 tbody의 마지막 줄로 완전히 병합하여 분리 절대 방어 */}
             <tr className="border-none">
               <td colSpan={6} className="border-none pt-6 pb-2 text-center text-sm text-gray-700 font-bold tracking-wide">
                 - 위 내용과 같이 매출 내역을 청구(보고)합니다 -

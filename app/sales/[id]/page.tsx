@@ -7,6 +7,7 @@ import * as XLSX from 'xlsx';
 
 interface InvoiceDetail {
   id: string;
+  company_id: string; 
   invoice_no: string;
   issue_date: string;
   supply_amount: number;
@@ -26,6 +27,7 @@ interface InvoiceDetail {
     ceo_name: string;
     address: string;
     contact: string;
+    bank_account: string; 
   };
 }
 
@@ -66,6 +68,7 @@ export default function InvoiceDetailPage() {
 
   const [isEditing, setIsEditing] = useState(false);
   const [editItems, setEditItems] = useState<InvoiceItem[]>([]);
+  const [editDate, setEditDate] = useState(''); 
   const [isUpdating, setIsUpdating] = useState(false);
 
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -93,7 +96,7 @@ export default function InvoiceDetailPage() {
         .select(`
           *,
           clients (name, business_number, address, contact),
-          companies (name, business_number, ceo_name, address, contact)
+          companies (name, business_number, ceo_name, address, contact, bank_account)
         `)
         .eq('id', invoiceId)
         .single();
@@ -170,9 +173,59 @@ export default function InvoiceDetailPage() {
     }
   };
 
+  const handleCopyInvoice = async () => {
+    if (!window.confirm('이 명세서를 똑같이 복사하여 새 명세서를 발행하시겠습니까?\n(작성일자는 오늘 날짜로 자동 세팅됩니다.)')) return;
+
+    try {
+      const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const randomStr = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+      const generatedInvoiceNo = `INV-${dateStr}-${randomStr}`;
+
+      const { data: newInvoice, error: invError } = await supabase
+        .from('invoices')
+        .insert([{
+          company_id: invoice!.company_id,
+          client_id: invoice!.client_id,
+          invoice_no: generatedInvoiceNo,
+          supply_amount: invoice!.supply_amount,
+          vat_amount: invoice!.vat_amount,
+          total_amount: invoice!.total_amount
+        }])
+        .select()
+        .single();
+
+      if (invError) throw invError;
+
+      const itemsToInsert = items.map(item => ({
+        invoice_id: newInvoice.id,
+        product_id: item.product_id || null,
+        name: item.name,
+        spec: item.spec,
+        qty: item.qty,
+        price: item.price
+      }));
+
+      const { error: itemsError } = await supabase.from('invoice_items').insert(itemsToInsert);
+      if (itemsError) throw itemsError;
+
+      alert('명세서가 성공적으로 복사되었습니다!\n복사된 새 명세서 화면으로 이동합니다.');
+      router.push(`/sales/${newInvoice.id}`);
+
+    } catch (error: any) {
+      alert('명세서 복사에 실패했습니다.');
+      console.error(error);
+    }
+  };
+
   const startEditing = () => {
     setIsEditing(true);
     setEditItems([...items]); 
+    
+    const d = new Date(invoice!.created_at);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    setEditDate(`${yyyy}-${mm}-${dd}`);
   };
 
   const addEditItem = () => {
@@ -228,6 +281,7 @@ export default function InvoiceDetailPage() {
       const { error: updateError } = await supabase
         .from('invoices')
         .update({
+          created_at: `${editDate}T09:00:00Z`, 
           supply_amount: supplyTotal,
           vat_amount: vatTotal,
           total_amount: grandTotal
@@ -315,10 +369,17 @@ export default function InvoiceDetailPage() {
     const totalRows = Math.max(minRows, items.length);
     
     return (
-      <div className="bg-white p-6 shadow-lg mb-4 print:shadow-none print:m-0 print:p-0 print-half border border-gray-300 print:border-none relative">
+      <div className="bg-white p-6 shadow-lg mb-4 print:shadow-none print:m-0 print:p-0 print-half border border-gray-300 print:border-none relative flex flex-col">
         
-        <div className="flex justify-between items-end mb-4 border-b-2 border-black pb-2">
-          <div className="w-1/3">
+        <div className="flex justify-between items-end mb-4 border-b-2 border-black pb-2 shrink-0">
+          <div className="w-1/3 flex flex-col justify-end">
+            {typeLabel === '공급받는자 보관용' && invoice.companies?.bank_account && (
+              <div className="mb-1">
+                <span className="text-xs font-bold text-black">
+                  [입금계좌] {invoice.companies.bank_account}
+                </span>
+              </div>
+            )}
             <p className="text-xs font-bold mb-1">작성일자: {new Date(invoice.created_at).toLocaleDateString()}</p>
           </div>
           <div className="w-1/3 text-center">
@@ -329,7 +390,7 @@ export default function InvoiceDetailPage() {
           </div>
         </div>
 
-        <div className="flex justify-between gap-2 text-xs mb-4">
+        <div className="flex justify-between gap-2 text-xs mb-4 shrink-0">
           <table className="w-1/2 border-collapse border border-black">
             <tbody>
               <tr>
@@ -377,7 +438,7 @@ export default function InvoiceDetailPage() {
           </table>
         </div>
 
-        <table className="w-full border-collapse border border-black text-xs mb-2 table-fixed">
+        <table className="w-full border-collapse border border-black text-xs mb-2 table-fixed flex-grow">
           <thead>
             <tr className="bg-gray-100 text-center font-bold">
               <th className="p-1 border border-black w-8">No</th>
@@ -426,14 +487,25 @@ export default function InvoiceDetailPage() {
           </tbody>
         </table>
 
-        <div className="flex justify-between items-end mt-auto pt-2 border-t-2 border-black">
-          <div className="flex items-center gap-2">
-            <span className="font-bold text-sm bg-gray-200 px-2 py-1 border border-black">총 합계금액</span>
-            <span className="font-extrabold text-lg tracking-widest pl-2">￦ {invoice.total_amount.toLocaleString()}</span>
+        {/* === 수정: 하단에 공급가액 / 세액 / 합계 분리 표시 === */}
+        <div className="flex justify-between items-end mt-auto pt-2 border-t-2 border-black shrink-0">
+          <div className="flex items-center border border-gray-400 text-[11px] md:text-xs">
+            <div className="flex items-center border-r border-gray-400">
+              <span className="bg-gray-100 px-2 py-1 font-bold border-r border-gray-400">공급가액</span>
+              <span className="px-2 font-medium">{invoice.supply_amount.toLocaleString()}</span>
+            </div>
+            <div className="flex items-center border-r border-gray-400">
+              <span className="bg-gray-100 px-2 py-1 font-bold border-r border-gray-400">세액</span>
+              <span className="px-2 font-medium">{invoice.vat_amount.toLocaleString()}</span>
+            </div>
+            <div className="flex items-center">
+              <span className="bg-gray-200 px-2 py-1 font-bold border-r border-gray-400">합계</span>
+              <span className="px-3 font-extrabold text-sm md:text-base tracking-widest text-black">￦ {invoice.total_amount.toLocaleString()}</span>
+            </div>
           </div>
-          <div className="text-xs font-bold flex items-center gap-2">
+          <div className="text-xs font-bold flex items-center gap-2 mb-1">
             <span>인수자 :</span>
-            <div className="w-24 border-b border-black"></div>
+            <div className="w-20 border-b border-black"></div>
             <span>(서명/인)</span>
           </div>
         </div>
@@ -448,11 +520,10 @@ export default function InvoiceDetailPage() {
   return (
     <div className="p-4 md:p-8 bg-gray-100 min-h-screen text-black print:bg-white print:p-0">
       
-      {/* === 프린트 전용 CSS: 여백 완전 제거 및 컨테이너 강제 고정 === */}
       <style dangerouslySetInnerHTML={{
         __html: `
           @media print {
-            @page { size: A4 portrait; margin: 0 !important; } /* 브라우저 여백 완전 차단 */
+            @page { size: A4 portrait; margin: 0 !important; }
             body { margin: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; background-color: white !important; }
             .print-container { width: 210mm; height: 297mm; padding: 12mm 15mm; box-sizing: border-box; overflow: hidden; page-break-inside: avoid; margin: 0 auto; }
             .print-half { height: 132mm; overflow: hidden; display: flex; flex-direction: column; }
@@ -469,14 +540,17 @@ export default function InvoiceDetailPage() {
         <div className="space-x-2">
           {!isEditing ? (
             <>
-              <button onClick={startEditing} className="bg-yellow-500 text-white px-4 py-2 rounded hover:bg-yellow-600 transition font-bold text-sm">
+              <button onClick={handleCopyInvoice} className="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 transition font-bold text-sm shadow-md">
+                문서 복사하기
+              </button>
+              <button onClick={startEditing} className="bg-yellow-500 text-white px-4 py-2 rounded hover:bg-yellow-600 transition font-bold text-sm shadow-md">
                 내용 수정하기
               </button>
-              <button onClick={handleExcelExport} className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition font-bold text-sm">
+              <button onClick={handleExcelExport} className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition font-bold text-sm shadow-md hidden sm:inline-block">
                 엑셀 다운로드
               </button>
               <button onClick={handlePrint} className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 transition font-extrabold text-sm shadow-md animate-pulse hover:animate-none">
-                🖨️ 명세서 인쇄 (A4)
+                🖨️ 명세서 인쇄
               </button>
             </>
           ) : (
@@ -494,7 +568,18 @@ export default function InvoiceDetailPage() {
 
       {isEditing ? (
         <div className="max-w-4xl mx-auto bg-white p-8 shadow-lg border-2 border-yellow-400 rounded-lg">
-          <h2 className="text-2xl font-bold mb-6 text-yellow-600 border-b pb-2">명세서 내용 수정</h2>
+          <h2 className="text-2xl font-bold mb-4 text-yellow-600 border-b pb-2">명세서 내용 수정</h2>
+          
+          <div className="mb-6 bg-yellow-50 p-4 rounded-lg border border-yellow-200">
+            <label className="block text-sm font-bold text-gray-700 mb-2">발행 날짜 (작성일자) 변경</label>
+            <input 
+              type="date" 
+              value={editDate} 
+              onChange={(e) => setEditDate(e.target.value)} 
+              className="w-full md:w-auto border border-yellow-300 rounded p-2 outline-none focus:border-yellow-500 bg-white font-bold text-gray-800" 
+            />
+            <p className="text-xs text-gray-500 mt-2">* 이 날짜를 기준으로 월별/연별 매출에 합산됩니다.</p>
+          </div>
           
           <div className="overflow-x-auto">
             <table className="w-full mb-4 border-collapse min-w-[600px]">
@@ -565,14 +650,12 @@ export default function InvoiceDetailPage() {
           </button>
         </div>
       ) : (
-        /* === 실무용 양식 화면 (2장 연속 렌더링, 인쇄 컨테이너 적용) === */
         <div className="max-w-4xl mx-auto flex flex-col items-center print-container">
           <div className="w-full max-w-[210mm]">
             {renderInvoiceHalf('공급자 보관용')}
             
-            {/* 중간 절취선 */}
             <div className="w-full border-b-2 border-dashed border-gray-400 relative my-2 print-cut">
-              <span className="absolute left-1/2 top-1/2 -translate-y-1/2 -translate-x-1/2 bg-gray-100 print:bg-white px-4 text-gray-500 font-bold text-sm">✂ 절취선 ✂</span>
+              <span className="absolute left-1/2 top-1/2 -translate-y-1/2 -translate-x-1/2 bg-gray-100 print:bg-white px-4 text-gray-500 font-bold text-sm"></span>
             </div>
 
             {renderInvoiceHalf('공급받는자 보관용')}
@@ -580,7 +663,6 @@ export default function InvoiceDetailPage() {
         </div>
       )}
 
-      {/* 첨부파일 관리 영역 (인쇄 시 숨김) */}
       {!isEditing && (
         <div className="max-w-4xl mx-auto mt-6 bg-white p-6 shadow-lg rounded-lg print:hidden border border-gray-200">
           <div className="flex justify-between items-center mb-4 border-b pb-2">

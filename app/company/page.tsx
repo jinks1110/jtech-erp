@@ -15,6 +15,8 @@ export default function CompanySettingsPage() {
   const [ceoName, setCeoName] = useState('');
   const [address, setAddress] = useState('');
   const [contact, setContact] = useState('');
+  // === 신규: 계좌번호 상태 추가 ===
+  const [bankAccount, setBankAccount] = useState('');
 
   useEffect(() => {
     const fetchCompanyInfo = async () => {
@@ -44,6 +46,8 @@ export default function CompanySettingsPage() {
           setCeoName(companyData.ceo_name || '');
           setAddress(companyData.address || '');
           setContact(companyData.contact || '');
+          // DB에서 계좌번호 불러오기
+          setBankAccount(companyData.bank_account || '');
         }
       } catch (error: any) {
         console.error('회사 정보 로드 실패:', error.message);
@@ -71,13 +75,14 @@ export default function CompanySettingsPage() {
           business_number: businessNumber,
           ceo_name: ceoName,
           address,
-          contact
+          contact,
+          bank_account: bankAccount // 계좌번호 저장
         })
         .eq('id', companyId);
 
       if (error) throw error;
-      alert('회사 정보가 성공적으로 저장되었습니다.\n(앞으로 출력되는 명세서에 이 정보가 반영됩니다.)');
-      router.push('/'); // 저장 후 메인 화면으로 이동
+      alert('회사 정보가 성공적으로 저장되었습니다.\n(입력하신 계좌번호는 거래처 보관용 명세서에 자동 출력됩니다.)');
+      router.push('/'); 
     } catch (error: any) {
       alert('저장에 실패했습니다: ' + error.message);
     } finally {
@@ -124,6 +129,13 @@ export default function CompanySettingsPage() {
           <div>
             <label className="block text-sm font-bold text-gray-700 mb-1">대표 연락처</label>
             <input type="text" value={contact} onChange={(e) => setContact(e.target.value)} className="w-full border-2 border-gray-200 rounded-lg p-3 outline-none focus:border-blue-500 bg-white transition" placeholder="예: 010-1234-5678 또는 031-123-4567" />
+          </div>
+          
+          {/* === 신규: 결제 계좌번호 입력 칸 === */}
+          <div className="bg-yellow-50 p-4 rounded-lg border border-yellow-200 mt-2">
+            <label className="block text-sm font-bold text-yellow-800 mb-1">입금 계좌번호 (선택)</label>
+            <input type="text" value={bankAccount} onChange={(e) => setBankAccount(e.target.value)} className="w-full border-2 border-yellow-300 rounded-lg p-3 outline-none focus:border-yellow-500 bg-white transition" placeholder="예: 기업은행 123-4567-8901 (제이테크)" />
+            <p className="text-xs text-gray-500 mt-2">* 입력 시 거래처 전달용 명세서(하단)에만 계좌번호가 자동 인쇄됩니다.</p>
           </div>
           
           <div className="pt-4 mt-6 border-t border-gray-100">
