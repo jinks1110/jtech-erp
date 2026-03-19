@@ -29,13 +29,18 @@ export default function QuotationDetailPage() {
   const [editDate, setEditDate] = useState(''); 
   const [isUpdating, setIsUpdating] = useState(false);
 
-  const [confirmModal, setConfirmModal] = useState({
+  // === 핵심 수정: onConfirm의 타입을 명확히 하고 비동기를 지원하도록 설정 ===
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean; title: string; desc: string; isAlert: boolean;
+    confirmText: string; confirmColor: string; onConfirm: () => Promise<void> | void;
+  }>({
     isOpen: false, title: '', desc: '', isAlert: false,
-    confirmText: '확인', confirmColor: 'bg-blue-600 hover:bg-blue-700', onConfirm: async () => {}
+    confirmText: '확인', confirmColor: 'bg-blue-600 hover:bg-blue-700', 
+    onConfirm: () => {} 
   });
 
   const closeModal = () => setConfirmModal(prev => ({ ...prev, isOpen: false }));
-  const showAlert = (title: string, desc: string, onConfirm = closeModal) => {
+  const showAlert = (title: string, desc: string, onConfirm: () => void = closeModal) => {
     setConfirmModal({ isOpen: true, title, desc, isAlert: true, confirmText: '확인', confirmColor: 'bg-blue-600 hover:bg-blue-700', onConfirm });
   };
 
@@ -45,21 +50,17 @@ export default function QuotationDetailPage() {
         setLoading(true);
         const { data: { session } } = await supabase.auth.getSession();
         if (!session) throw new Error('로그인이 필요합니다.');
-
         const { data: profile } = await supabase.from('profiles').select('company_id').eq('id', session.user.id).single();
-        
         const { data: invData } = await supabase.from('quotations').select('*, clients (name, business_number, address, contact), companies (name, business_number, ceo_name, address, contact)').eq('id', quotationId).single();
         setQuotation(invData as unknown as QuotationDetail);
-        
         const { data: itemsData } = await supabase.from('quotation_items').select('*').eq('quotation_id', quotationId).order('created_at', { ascending: true });
         setItems(itemsData || []);
-
         if (profile) {
           const { data: productsData } = await supabase.from('products').select('*').eq('company_id', profile.company_id).eq('is_active', true).order('name', { ascending: true });
           if (productsData) setProducts(productsData);
         }
       } catch (error) {
-        alert('조회 실패');
+        console.error(error);
       } finally {
         setLoading(false);
       }
@@ -67,16 +68,18 @@ export default function QuotationDetailPage() {
     if (quotationId) fetchDetail();
   }, [quotationId]);
 
+  // === 수정: handleCopyQuotation 함수가 비동기 로직을 안전하게 처리하도록 보완 ===
   const handleCopyQuotation = () => {
     setConfirmModal({
       isOpen: true, title: '견적서 복사', desc: '이 견적서를 똑같이 복사하여 새 견적서를 작성하시겠습니까?\n(견적일자는 오늘 날짜로 자동 세팅됩니다.)', isAlert: false,
       confirmText: '복사하기', confirmColor: 'bg-purple-600 hover:bg-purple-700',
       onConfirm: async () => {
-        closeModal();
         try {
+          // 1. 모달부터 닫아서 중복 클릭 방지
+          setConfirmModal(prev => ({ ...prev, isOpen: false }));
+          
           const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-          const randomStr = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-          const generatedQuotationNo = `EST-${dateStr}-${randomStr}`;
+          const generatedQuotationNo = `EST-${dateStr}-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`;
 
           const { data: newQuote, error: quoteError } = await supabase.from('quotations').insert([{
             company_id: quotation!.company_id, client_id: quotation!.client_id, quotation_no: generatedQuotationNo,
@@ -87,16 +90,18 @@ export default function QuotationDetailPage() {
           const itemsToInsert = items.map(item => ({
             quotation_id: newQuote.id, product_id: item.product_id || null, name: item.name, spec: item.spec, qty: item.qty, price: item.price
           }));
-
           const { error: itemsError } = await supabase.from('quotation_items').insert(itemsToInsert);
           if (itemsError) throw itemsError;
 
-          showAlert('복사 완료', '견적서가 성공적으로 복사되었습니다!\n복사된 새 견적서 화면으로 이동합니다.', () => {
-            closeModal();
-            router.push(`/quotation/${newQuote.id}`);
-          });
+          // 성공 알림 후 이동
+          setTimeout(() => {
+            showAlert('복사 완료', '새 견적서 화면으로 이동합니다.', () => {
+              closeModal();
+              router.push(`/quotation/${newQuote.id}`);
+            });
+          }, 100);
         } catch (error: any) {
-          showAlert('복사 실패', '견적서 복사에 실패했습니다.');
+          showAlert('복사 실패', '견적서 복사 중 오류가 발생했습니다.');
         }
       }
     });
@@ -122,11 +127,10 @@ export default function QuotationDetailPage() {
   };
 
   const handleUpdate = async () => {
-    if (editItems.some(item => !item.name || item.qty <= 0)) { showAlert('입력 오류', '모든 품목을 올바르게 입력하고 수량을 지정해주세요.'); return; }
+    if (editItems.some(item => !item.name || item.qty <= 0)) { showAlert('입력 오류', '모든 품목을 올바르게 입력해주세요.'); return; }
     try {
       setIsUpdating(true);
       let supplyTotal = 0; let vatTotal = 0;
-
       editItems.forEach(item => {
         const lineTotal = item.qty * item.price;
         if (item.is_vat_included) { const supply = Math.round(lineTotal / 1.1); supplyTotal += supply; vatTotal += (lineTotal - supply); } 
@@ -134,24 +138,13 @@ export default function QuotationDetailPage() {
       });
       const grandTotal = supplyTotal + vatTotal;
 
-      const { error: updateError } = await supabase.from('quotations').update({
-        created_at: `${editDate}T09:00:00Z`, supply_amount: supplyTotal, vat_amount: vatTotal, total_amount: grandTotal
-      }).eq('id', quotationId);
-      if (updateError) throw updateError;
-
+      await supabase.from('quotations').update({ created_at: `${editDate}T09:00:00Z`, supply_amount: supplyTotal, vat_amount: vatTotal, total_amount: grandTotal }).eq('id', quotationId);
       await supabase.from('quotation_items').delete().eq('quotation_id', quotationId);
-      const itemsToInsert = editItems.map(item => ({
-        quotation_id: quotationId, product_id: item.product_id || null, name: item.name, spec: item.spec, qty: item.qty, price: item.price
-      }));
-      const { error: insertError } = await supabase.from('quotation_items').insert(itemsToInsert);
-      if (insertError) throw insertError;
+      await supabase.from('quotation_items').insert(editItems.map(item => ({ quotation_id: quotationId, product_id: item.product_id || null, name: item.name, spec: item.spec, qty: item.qty, price: item.price })));
 
-      showAlert('수정 완료', '견적서가 성공적으로 수정되었습니다.', () => {
-        closeModal();
-        window.location.reload(); 
-      });
-    } catch (error: any) {
-      showAlert('수정 실패', '수정에 실패했습니다.');
+      showAlert('수정 완료', '견적서가 수정되었습니다.', () => { closeModal(); window.location.reload(); });
+    } catch (error) {
+      showAlert('수정 실패', '수정 중 오류가 발생했습니다.');
     } finally {
       setIsUpdating(false);
     }
@@ -163,8 +156,7 @@ export default function QuotationDetailPage() {
 
   return (
     <div className="p-4 md:p-8 bg-gray-100 min-h-screen text-black print:bg-white print:p-0 relative">
-      
-      {/* 커스텀 모달 */}
+      {/* 커스텀 모달 UI */}
       {confirmModal.isOpen && (
         <div className="fixed inset-0 z-[100] flex items-start justify-center pt-20 p-4 print:hidden">
           <div className="absolute inset-0 bg-transparent" onClick={closeModal}></div>
@@ -173,7 +165,7 @@ export default function QuotationDetailPage() {
             <p className="text-gray-600 mb-6 whitespace-pre-line text-sm leading-relaxed">{confirmModal.desc}</p>
             <div className="flex justify-end gap-3">
               {!confirmModal.isAlert && <button onClick={closeModal} className="px-4 py-2 rounded-lg font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 transition">취소</button>}
-              <button onClick={confirmModal.onConfirm} className={`px-4 py-2 rounded-lg font-bold text-white transition shadow-md ${confirmModal.confirmColor}`}>{confirmModal.confirmText}</button>
+              <button onClick={() => confirmModal.onConfirm()} className={`px-4 py-2 rounded-lg font-bold text-white transition shadow-md ${confirmModal.confirmColor}`}>{confirmModal.confirmText}</button>
             </div>
           </div>
         </div>
@@ -191,7 +183,7 @@ export default function QuotationDetailPage() {
             <>
               <button onClick={handleCopyQuotation} className="flex-1 sm:flex-none bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 transition font-bold text-sm shadow-md">문서 복사</button>
               <button onClick={startEditing} className="flex-1 sm:flex-none bg-yellow-500 text-white px-4 py-2 rounded hover:bg-yellow-600 transition font-bold text-sm shadow-md">내용 수정</button>
-              <button onClick={() => window.print()} className="w-full sm:w-auto bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 font-extrabold text-sm shadow animate-pulse hover:animate-none">🖨️ 인쇄 (A4)</button>
+              <button onClick={() => window.print()} className="w-full sm:w-auto bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 font-extrabold text-sm shadow shadow-blue-200 animate-pulse hover:animate-none">🖨️ 인쇄 (A4)</button>
             </>
           ) : (
             <>
@@ -209,27 +201,26 @@ export default function QuotationDetailPage() {
             <label className="block text-sm font-bold text-gray-700 mb-2">견적 일자 변경</label>
             <input type="date" value={editDate} onChange={(e) => setEditDate(e.target.value)} className="w-full md:w-auto border border-yellow-300 rounded p-2 outline-none focus:border-yellow-500 bg-white font-bold text-gray-800" />
           </div>
-          <div className="hidden md:block overflow-x-auto">
+          <div className="overflow-x-auto">
             <table className="w-full mb-4 border-collapse min-w-[600px]">
-              <thead><tr className="bg-gray-100 text-left text-sm"><th className="p-2 border">품목 선택 (변경 시)</th><th className="p-2 border">품명 (직접입력)</th><th className="p-2 border w-24">수량</th><th className="p-2 border w-32">단가</th><th className="p-2 border text-center w-16">관리</th></tr></thead>
+              <thead><tr className="bg-gray-100 text-left text-sm"><th className="p-2 border">품목 선택</th><th className="p-2 border">품명</th><th className="p-2 border w-24">수량</th><th className="p-2 border w-32">단가</th><th className="p-2 border text-center w-16">관리</th></tr></thead>
               <tbody>{editItems.map((item, idx) => (
                   <tr key={idx} className="text-sm">
-                    <td className="border p-2"><select className="w-full outline-none bg-transparent" value={item.product_id || ''} onChange={(e) => handleProductSelect(idx, e.target.value)}><option value="">품목 변경 안함</option>{products.map(p => <option key={p.id} value={p.id}>{p.name} {p.spec ? `(${p.spec})` : ''}</option>)}</select></td>
+                    <td className="border p-2"><select className="w-full outline-none bg-transparent" value={item.product_id || ''} onChange={(e) => handleProductSelect(idx, e.target.value)}><option value="">변경 안함</option>{products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></td>
                     <td className="border p-2"><input type="text" className="w-full outline-none" value={item.name} onChange={(e) => { const newItems = [...editItems]; newItems[idx].name = e.target.value; setEditItems(newItems); }} /></td>
-                    <td className="border p-2"><input type="number" className="w-full outline-none text-right" value={item.qty === 0 ? '' : item.qty} onChange={(e) => { const newItems = [...editItems]; newItems[idx].qty = Number(e.target.value); setEditItems(newItems); }} /></td>
-                    <td className="border p-2"><input type="number" className="w-full outline-none text-right" value={item.price === 0 ? '' : item.price} onChange={(e) => { const newItems = [...editItems]; newItems[idx].price = Number(e.target.value); setEditItems(newItems); }} /></td>
-                    <td className="border p-2 text-center"><button onClick={() => removeEditItem(idx)} className="text-red-500 font-bold px-2 py-1 bg-red-50 rounded hover:bg-red-100">삭제</button></td>
+                    <td className="border p-2"><input type="number" className="w-full outline-none text-right" value={item.qty || ''} onChange={(e) => { const newItems = [...editItems]; newItems[idx].qty = Number(e.target.value); setEditItems(newItems); }} /></td>
+                    <td className="border p-2"><input type="number" className="w-full outline-none text-right" value={item.price || ''} onChange={(e) => { const newItems = [...editItems]; newItems[idx].price = Number(e.target.value); setEditItems(newItems); }} /></td>
+                    <td className="border p-2 text-center"><button onClick={() => removeEditItem(idx)} className="text-red-500 font-bold">삭제</button></td>
                   </tr>
                 ))}</tbody>
             </table>
           </div>
-          <button onClick={addEditItem} className="w-full md:w-auto bg-gray-800 text-white px-6 py-3 md:py-2 rounded hover:bg-gray-700 transition font-bold text-sm">+ 품목 줄 추가</button>
+          <button onClick={addEditItem} className="bg-gray-800 text-white px-6 py-2 rounded hover:bg-gray-700 transition font-bold text-sm">+ 줄 추가</button>
         </div>
       ) : (
         <div className="w-full overflow-x-auto pb-4">
           <div className="max-w-4xl mx-auto bg-white p-8 shadow-lg border border-gray-300 print-safe-container flex flex-col min-w-[210mm]">
             <h1 className="text-4xl font-extrabold text-center mb-8 tracking-[1em] underline underline-offset-8 decoration-2 shrink-0">견 적 서</h1>
-            
             <div className="flex justify-between items-stretch mb-2 shrink-0 gap-4">
               <div className="w-1/2 flex flex-col justify-between">
                 <div><div className="flex items-end mb-2 border-b-2 border-black pb-1"><span className="text-2xl font-bold">{quotation.clients?.name}</span><span className="text-lg ml-2">귀하</span></div><p className="text-sm font-bold text-gray-600">견적일자: {new Date(quotation.created_at).toLocaleDateString()}</p></div>
@@ -246,9 +237,7 @@ export default function QuotationDetailPage() {
                 </table>
               </div>
             </div>
-
             <p className="mb-4 text-sm font-bold shrink-0">아래와 같이 견적합니다.</p>
-
             <div className="flex-grow">
               <table className="w-full border-collapse border border-black text-sm mb-4 table-fixed">
                 <thead><tr className="bg-gray-100 text-center font-bold"><th className="p-2 border border-black w-10">No</th><th className="p-2 border border-black w-48">품 명</th><th className="p-2 border border-black w-24">규 격</th><th className="p-2 border border-black w-16">수 량</th><th className="p-2 border border-black w-24">단 가</th><th className="p-2 border border-black w-28">금 액</th><th className="p-2 border border-black w-20">비 고</th></tr></thead>
@@ -266,7 +255,6 @@ export default function QuotationDetailPage() {
                 </tfoot>
               </table>
             </div>
-
             <div className="shrink-0 mt-4 pt-4 border-t-2 border-black text-sm space-y-1 text-gray-800 pb-2">
               <p className="font-bold">1. 견적 유효기간 : 견적일로부터 15일</p>
               <p className="font-bold">2. 결제 조건 : 납품 후 협의 (세금계산서 발행 가능)</p>
