@@ -192,18 +192,19 @@ export default function MainPage() {
 
         {/* === 수정: 핵심 메뉴 바로가기 (6개로 확장) === */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-          <Link href="/clients" className="bg-white p-6 rounded-lg shadow hover:shadow-xl transition transform hover:-translate-y-1 group border border-transparent hover:border-gray-200">
-            <div className="text-4xl mb-4 group-hover:scale-110 transition inline-block">🏢</div>
-            <h2 className="text-xl font-bold text-gray-800">거래처 관리</h2>
-            <p className="text-sm text-gray-500 mt-2">신규 거래처 등록 및 비활성화 관리</p>
-          </Link>
-          <Link href="/products" className="bg-white p-6 rounded-lg shadow hover:shadow-xl transition transform hover:-translate-y-1 group border border-transparent hover:border-gray-200">
-            <div className="text-4xl mb-4 group-hover:scale-110 transition inline-block">📦</div>
-            <h2 className="text-xl font-bold text-gray-800">품목 단가 관리</h2>
-            <p className="text-sm text-gray-500 mt-2">하네스 규격 및 단가표 업데이트</p>
+          <Link href="/invoice" className="bg-white p-6 rounded-lg shadow hover:shadow-xl transition transform hover:-translate-y-1 group border-2 border-transparent hover:border-blue-400">
+            <div className="text-4xl mb-4 group-hover:scale-110 transition inline-block">✍️</div>
+            <h2 className="text-xl font-bold text-blue-700">명세서 작성</h2>
+            <p className="text-sm text-gray-500 mt-2">신규 거래명세표 입력 및 발행</p>
           </Link>
 
-          {/* 신규: 견적서 작성 */}
+          <Link href="/sales" className="bg-white p-6 rounded-lg shadow hover:shadow-xl transition transform hover:-translate-y-1 group border border-transparent hover:border-gray-200">
+            <div className="text-4xl mb-4 group-hover:scale-110 transition inline-block">📊</div>
+            <h2 className="text-xl font-bold text-gray-800">매출 및 내역 조회</h2>
+            <p className="text-sm text-gray-500 mt-2">과거 명세서 조회 및 엑셀 다운로드</p>
+          </Link>
+
+                    {/* 신규: 견적서 작성 */}
           <Link href="/quotation" className="bg-white p-6 rounded-lg shadow hover:shadow-xl transition transform hover:-translate-y-1 group border-2 border-transparent hover:border-yellow-400">
             <div className="text-4xl mb-4 group-hover:scale-110 transition inline-block">📝</div>
             <h2 className="text-xl font-bold text-yellow-700">견적서 작성</h2>
@@ -217,16 +218,18 @@ export default function MainPage() {
             <p className="text-sm text-gray-500 mt-2">발행된 견적서 조회 및 수정</p>
           </Link>
 
-          <Link href="/invoice" className="bg-white p-6 rounded-lg shadow hover:shadow-xl transition transform hover:-translate-y-1 group border-2 border-transparent hover:border-blue-400">
-            <div className="text-4xl mb-4 group-hover:scale-110 transition inline-block">✍️</div>
-            <h2 className="text-xl font-bold text-blue-700">명세서 작성</h2>
-            <p className="text-sm text-gray-500 mt-2">신규 거래명세표 입력 및 발행</p>
+          <Link href="/clients" className="bg-white p-6 rounded-lg shadow hover:shadow-xl transition transform hover:-translate-y-1 group border border-transparent hover:border-gray-200">
+            <div className="text-4xl mb-4 group-hover:scale-110 transition inline-block">🏢</div>
+            <h2 className="text-xl font-bold text-gray-800">거래처 관리</h2>
+            <p className="text-sm text-gray-500 mt-2">신규 거래처 등록 및 비활성화 관리</p>
           </Link>
-          <Link href="/sales" className="bg-white p-6 rounded-lg shadow hover:shadow-xl transition transform hover:-translate-y-1 group border border-transparent hover:border-gray-200">
-            <div className="text-4xl mb-4 group-hover:scale-110 transition inline-block">📊</div>
-            <h2 className="text-xl font-bold text-gray-800">매출 및 내역 조회</h2>
-            <p className="text-sm text-gray-500 mt-2">과거 명세서 조회 및 엑셀 다운로드</p>
+          
+          <Link href="/products" className="bg-white p-6 rounded-lg shadow hover:shadow-xl transition transform hover:-translate-y-1 group border border-transparent hover:border-gray-200">
+            <div className="text-4xl mb-4 group-hover:scale-110 transition inline-block">📦</div>
+            <h2 className="text-xl font-bold text-gray-800">품목 단가 관리</h2>
+            <p className="text-sm text-gray-500 mt-2">하네스 규격 및 단가표 업데이트</p>
           </Link>
+
         </div>
 
         {/* 공용 자료실 */}

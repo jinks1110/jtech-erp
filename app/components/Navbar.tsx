@@ -23,14 +23,14 @@ export default function Navbar() {
           </Link>
 
           <div className="flex space-x-1 md:space-x-4">
-            <Link href="/clients" className="px-3 py-2 rounded-md text-sm font-medium hover:bg-gray-700 transition">거래처</Link>
-            <Link href="/products" className="px-3 py-2 rounded-md text-sm font-medium hover:bg-gray-700 transition">품목/단가</Link>
+            <Link href="/invoice" className="px-3 py-2 rounded-md text-sm font-medium text-blue-300 hover:bg-gray-700 transition">명세서 작성</Link>
+            <Link href="/sales" className="px-3 py-2 rounded-md text-sm font-medium text-blue-300 hover:bg-gray-700 transition">매출 조회</Link>
             <div className="h-6 w-px bg-gray-600 mx-2 self-center hidden md:block"></div>
             <Link href="/quotation" className="px-3 py-2 rounded-md text-sm font-medium text-yellow-400 hover:bg-gray-700 transition">견적서 작성</Link>
             <Link href="/quotation-list" className="px-3 py-2 rounded-md text-sm font-medium text-yellow-400 hover:bg-gray-700 transition">견적 조회</Link>
-            <div className="h-6 w-px bg-gray-600 mx-2 self-center hidden md:block"></div>
-            <Link href="/invoice" className="px-3 py-2 rounded-md text-sm font-medium text-blue-300 hover:bg-gray-700 transition">명세서 작성</Link>
-            <Link href="/sales" className="px-3 py-2 rounded-md text-sm font-medium text-blue-300 hover:bg-gray-700 transition">매출 조회</Link>
+            <div className="h-6 w-px bg-gray-600 mx-2 self-center hidden md:block"></div>  
+            <Link href="/clients" className="px-3 py-2 rounded-md text-sm font-medium hover:bg-gray-700 transition">거래처</Link>
+            <Link href="/products" className="px-3 py-2 rounded-md text-sm font-medium hover:bg-gray-700 transition">품목/단가</Link>
           </div>
 
         </div>

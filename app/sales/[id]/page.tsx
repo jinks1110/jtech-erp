@@ -74,6 +74,18 @@ export default function InvoiceDetailPage() {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [isUploading, setIsUploading] = useState(false);
 
+  // === 신규: 깔끔한 커스텀 모달창 상태 관리 ===
+  const [confirmModal, setConfirmModal] = useState({
+    isOpen: false,
+    title: '',
+    desc: '',
+    confirmText: '확인',
+    confirmColor: 'bg-blue-600 hover:bg-blue-700',
+    onConfirm: async () => {}
+  });
+
+  const closeModal = () => setConfirmModal({ ...confirmModal, isOpen: false });
+
   const fetchInvoiceDetail = async () => {
     try {
       setLoading(true);
@@ -173,48 +185,55 @@ export default function InvoiceDetailPage() {
     }
   };
 
-  const handleCopyInvoice = async () => {
-    if (!window.confirm('이 명세서를 똑같이 복사하여 새 명세서를 발행하시겠습니까?\n(작성일자는 오늘 날짜로 자동 세팅됩니다.)')) return;
+  // === 수정: 명세서 복사에 커스텀 모달 적용 ===
+  const handleCopyInvoice = () => {
+    setConfirmModal({
+      isOpen: true,
+      title: '명세서 복사',
+      desc: '이 명세서를 똑같이 복사하여 새 명세서를 발행하시겠습니까?\n(작성일자는 오늘 날짜로 자동 세팅됩니다.)',
+      confirmText: '복사하기',
+      confirmColor: 'bg-purple-600 hover:bg-purple-700',
+      onConfirm: async () => {
+        closeModal();
+        try {
+          const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+          const randomStr = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+          const generatedInvoiceNo = `INV-${dateStr}-${randomStr}`;
 
-    try {
-      const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-      const randomStr = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-      const generatedInvoiceNo = `INV-${dateStr}-${randomStr}`;
+          const { data: newInvoice, error: invError } = await supabase
+            .from('invoices')
+            .insert([{
+              company_id: invoice!.company_id,
+              client_id: invoice!.client_id,
+              invoice_no: generatedInvoiceNo,
+              supply_amount: invoice!.supply_amount,
+              vat_amount: invoice!.vat_amount,
+              total_amount: invoice!.total_amount
+            }])
+            .select()
+            .single();
 
-      const { data: newInvoice, error: invError } = await supabase
-        .from('invoices')
-        .insert([{
-          company_id: invoice!.company_id,
-          client_id: invoice!.client_id,
-          invoice_no: generatedInvoiceNo,
-          supply_amount: invoice!.supply_amount,
-          vat_amount: invoice!.vat_amount,
-          total_amount: invoice!.total_amount
-        }])
-        .select()
-        .single();
+          if (invError) throw invError;
 
-      if (invError) throw invError;
+          const itemsToInsert = items.map(item => ({
+            invoice_id: newInvoice.id,
+            product_id: item.product_id || null,
+            name: item.name,
+            spec: item.spec,
+            qty: item.qty,
+            price: item.price
+          }));
 
-      const itemsToInsert = items.map(item => ({
-        invoice_id: newInvoice.id,
-        product_id: item.product_id || null,
-        name: item.name,
-        spec: item.spec,
-        qty: item.qty,
-        price: item.price
-      }));
+          const { error: itemsError } = await supabase.from('invoice_items').insert(itemsToInsert);
+          if (itemsError) throw itemsError;
 
-      const { error: itemsError } = await supabase.from('invoice_items').insert(itemsToInsert);
-      if (itemsError) throw itemsError;
-
-      alert('명세서가 성공적으로 복사되었습니다!\n복사된 새 명세서 화면으로 이동합니다.');
-      router.push(`/sales/${newInvoice.id}`);
-
-    } catch (error: any) {
-      alert('명세서 복사에 실패했습니다.');
-      console.error(error);
-    }
+          router.push(`/sales/${newInvoice.id}`);
+        } catch (error: any) {
+          alert('명세서 복사에 실패했습니다.');
+          console.error(error);
+        }
+      }
+    });
   };
 
   const startEditing = () => {
@@ -350,16 +369,26 @@ export default function InvoiceDetailPage() {
     }
   };
 
-  const handleDeleteFile = async (id: string, filePath: string) => {
-    if (!window.confirm('첨부파일을 삭제하시겠습니까?')) return;
-    try {
-      await supabase.storage.from('attachments').remove([filePath]);
-      const { error } = await supabase.from('attachments').delete().eq('id', id);
-      if (error) throw error;
-      fetchInvoiceDetail(); 
-    } catch (error: any) {
-      alert('파일 삭제에 실패했습니다.');
-    }
+  // === 수정: 첨부파일 삭제에 커스텀 모달 적용 ===
+  const handleDeleteFile = (id: string, filePath: string) => {
+    setConfirmModal({
+      isOpen: true,
+      title: '첨부파일 삭제',
+      desc: '정말 이 첨부파일을 삭제하시겠습니까?',
+      confirmText: '삭제하기',
+      confirmColor: 'bg-red-600 hover:bg-red-700',
+      onConfirm: async () => {
+        closeModal();
+        try {
+          await supabase.storage.from('attachments').remove([filePath]);
+          const { error } = await supabase.from('attachments').delete().eq('id', id);
+          if (error) throw error;
+          fetchInvoiceDetail(); 
+        } catch (error: any) {
+          alert('파일 삭제에 실패했습니다.');
+        }
+      }
+    });
   };
 
   const renderInvoiceHalf = (typeLabel: string) => {
@@ -487,7 +516,6 @@ export default function InvoiceDetailPage() {
           </tbody>
         </table>
 
-        {/* === 수정: 하단에 공급가액 / 세액 / 합계 분리 표시 === */}
         <div className="flex justify-between items-end mt-auto pt-2 border-t-2 border-black shrink-0">
           <div className="flex items-center border border-gray-400 text-[11px] md:text-xs">
             <div className="flex items-center border-r border-gray-400">
@@ -518,8 +546,25 @@ export default function InvoiceDetailPage() {
   if (!invoice) return <div className="p-10 text-center">해당 명세서를 찾을 수 없습니다.</div>;
 
   return (
-    <div className="p-4 md:p-8 bg-gray-100 min-h-screen text-black print:bg-white print:p-0">
+    <div className="p-4 md:p-8 bg-gray-100 min-h-screen text-black print:bg-white print:p-0 relative">
       
+      {/* === 핵심: pt-20을 적용한 세련된 모달창 렌더링 영역 === */}
+      {confirmModal.isOpen && (
+        <div className="fixed inset-0 z-[100] flex items-start justify-center pt-20 p-4 print:hidden">
+          <div className="absolute inset-0 bg-transparent" onClick={closeModal}></div>
+          <div className="relative bg-white rounded-2xl shadow-[0_20px_60px_-15px_rgba(0,0,0,0.3)] border-2 border-gray-200 p-6 w-full max-w-sm animate-fade-in-up z-10">
+            <h3 className="text-xl font-extrabold text-gray-900 mb-2">{confirmModal.title}</h3>
+            <p className="text-gray-600 mb-6 whitespace-pre-line text-sm leading-relaxed">{confirmModal.desc}</p>
+            <div className="flex justify-end gap-3">
+              <button onClick={closeModal} className="px-4 py-2 rounded-lg font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 transition">취소</button>
+              <button onClick={confirmModal.onConfirm} className={`px-4 py-2 rounded-lg font-bold text-white transition shadow-md ${confirmModal.confirmColor}`}>
+                {confirmModal.confirmText}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <style dangerouslySetInnerHTML={{
         __html: `
           @media print {
@@ -529,6 +574,8 @@ export default function InvoiceDetailPage() {
             .print-half { height: 132mm; overflow: hidden; display: flex; flex-direction: column; }
             .print-cut { margin: 3mm 0; }
           }
+          @keyframes fadeInUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+          .animate-fade-in-up { animation: fadeInUp 0.2s ease-out forwards; }
         `
       }} />
 
@@ -540,6 +587,7 @@ export default function InvoiceDetailPage() {
         <div className="space-x-2">
           {!isEditing ? (
             <>
+              {/* 수정: 복사 버튼에 커스텀 모달 핸들러 연결 */}
               <button onClick={handleCopyInvoice} className="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 transition font-bold text-sm shadow-md">
                 문서 복사하기
               </button>
@@ -655,7 +703,7 @@ export default function InvoiceDetailPage() {
             {renderInvoiceHalf('공급자 보관용')}
             
             <div className="w-full border-b-2 border-dashed border-gray-400 relative my-2 print-cut">
-              <span className="absolute left-1/2 top-1/2 -translate-y-1/2 -translate-x-1/2 bg-gray-100 print:bg-white px-4 text-gray-500 font-bold text-sm"></span>
+              <span className="absolute left-1/2 top-1/2 -translate-y-1/2 -translate-x-1/2 bg-gray-100 print:bg-white px-4 text-gray-500 font-bold text-sm">✂ 절취선 ✂</span>
             </div>
 
             {renderInvoiceHalf('공급받는자 보관용')}
@@ -695,6 +743,7 @@ export default function InvoiceDetailPage() {
                   >
                     📄 {file.file_name}
                   </a>
+                  {/* 수정: 첨부파일 삭제에 커스텀 모달 핸들러 연결 */}
                   <button 
                     onClick={() => handleDeleteFile(file.id, file.file_path)}
                     className="text-red-500 hover:text-red-700 font-bold text-xs bg-white px-2 py-1 rounded border border-red-200"
