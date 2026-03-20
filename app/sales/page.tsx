@@ -37,6 +37,10 @@ export default function SalesPage() {
 
   const [quickYear, setQuickYear] = useState(new Date().getFullYear().toString());
   const [quickMonth, setQuickMonth] = useState((new Date().getMonth() + 1).toString());
+  
+  // === 신규 추가: 마감 기준 상태 관리 ===
+  const [cutoffType, setCutoffType] = useState<'endOfMonth' | '25th'>('endOfMonth');
+
   const [companyName, setCompanyName] = useState('J-TECH');
 
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
@@ -47,7 +51,47 @@ export default function SalesPage() {
 
   const closeModal = () => setConfirmModal({ ...confirmModal, isOpen: false });
 
-  useEffect(() => { applyQuickFilter(quickYear, quickMonth); }, []);
+  // === 수정: 마감 기준(cutoffType)을 포함하여 날짜 계산 ===
+  const applyQuickFilter = (year: string, month: string, cutoff: 'endOfMonth' | '25th') => {
+    if (!year) return;
+    
+    if (!month) {
+      // 전체 월 선택 시
+      if (cutoff === 'endOfMonth') {
+        setStartDate(`${year}-01-01`); 
+        setEndDate(`${year}-12-31`);
+      } else {
+        setStartDate(`${Number(year) - 1}-12-26`); 
+        setEndDate(`${year}-12-25`);
+      }
+    } else {
+      // 특정 연도/월 선택 시
+      const y = Number(year);
+      const m = Number(month);
+      
+      if (cutoff === 'endOfMonth') {
+        const paddedMonth = String(m).padStart(2, '0');
+        const lastDay = new Date(y, m, 0).getDate();
+        setStartDate(`${year}-${paddedMonth}-01`); 
+        setEndDate(`${year}-${paddedMonth}-${lastDay}`);
+      } else {
+        // 25일 마감 (전월 26일 ~ 당월 25일)
+        let prevYear = y;
+        let prevMonth = m - 1;
+        if (prevMonth === 0) {
+          prevYear = y - 1;
+          prevMonth = 12;
+        }
+        const paddedPrevMonth = String(prevMonth).padStart(2, '0');
+        const paddedCurrentMonth = String(m).padStart(2, '0');
+        
+        setStartDate(`${prevYear}-${paddedPrevMonth}-26`);
+        setEndDate(`${year}-${paddedCurrentMonth}-25`);
+      }
+    }
+  };
+
+  useEffect(() => { applyQuickFilter(quickYear, quickMonth, cutoffType); }, []);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -59,23 +103,18 @@ export default function SalesPage() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const applyQuickFilter = (year: string, month: string) => {
-    if (!year) return;
-    if (year && !month) {
-      setStartDate(`${year}-01-01`); setEndDate(`${year}-12-31`);
-    } else if (year && month) {
-      const paddedMonth = month.padStart(2, '0');
-      const lastDay = new Date(Number(year), Number(month), 0).getDate();
-      setStartDate(`${year}-${paddedMonth}-01`); setEndDate(`${year}-${paddedMonth}-${lastDay}`);
-    }
-  };
-
   const handleYearChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const y = e.target.value; setQuickYear(y); applyQuickFilter(y, quickMonth);
+    const y = e.target.value; setQuickYear(y); applyQuickFilter(y, quickMonth, cutoffType);
   };
 
   const handleMonthChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const m = e.target.value; setQuickMonth(m); applyQuickFilter(quickYear, m);
+    const m = e.target.value; setQuickMonth(m); applyQuickFilter(quickYear, m, cutoffType);
+  };
+
+  // === 신규 추가: 마감 기준 변경 시 실행되는 함수 ===
+  const handleCutoffChange = (type: 'endOfMonth' | '25th') => {
+    setCutoffType(type);
+    applyQuickFilter(quickYear, quickMonth, type);
   };
 
   const fetchData = async () => {
@@ -253,7 +292,6 @@ export default function SalesPage() {
     setActiveTab('list');
   };
 
-  // === 수정 2: 탭 전환 시 거래처 필터를 초기화하여 "전체 집계"가 보이게 하는 함수 ===
   const handleTabChange = (tab: 'list' | 'summary' | 'items') => {
     if (tab === 'summary' || tab === 'items') {
       setSelectedClientId('');
@@ -313,6 +351,23 @@ export default function SalesPage() {
 
           <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 mb-4 flex flex-col md:flex-row items-start md:items-center gap-4">
             <span className="font-bold text-blue-800 shrink-0">📅 빠른 검색:</span>
+            
+            {/* === 신규: 마감 기준 선택 버튼 === */}
+            <div className="flex bg-white border border-blue-200 rounded-lg overflow-hidden shrink-0 shadow-sm">
+              <button 
+                onClick={() => handleCutoffChange('endOfMonth')}
+                className={`px-4 py-2.5 md:py-2 text-sm font-extrabold transition-colors ${cutoffType === 'endOfMonth' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+              >
+                말일 마감
+              </button>
+              <button 
+                onClick={() => handleCutoffChange('25th')}
+                className={`px-4 py-2.5 md:py-2 text-sm font-extrabold transition-colors ${cutoffType === '25th' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+              >
+                25일 마감
+              </button>
+            </div>
+
             <div className="flex gap-2 w-full md:w-auto">
               <select value={quickYear} onChange={handleYearChange} className="flex-1 md:w-32 border rounded-lg p-2.5 outline-none focus:border-blue-500 bg-white font-medium text-gray-700 shadow-sm">
                 {yearOptions.map(y => <option key={y} value={y}>{y}년</option>)}
@@ -391,7 +446,6 @@ export default function SalesPage() {
         </div>
 
         <div className="bg-white shadow-lg rounded-t-lg border-b border-gray-200 flex overflow-x-auto">
-          {/* === 수정: 탭 전환 시 handleTabChange 호출로 필터 초기화 보장 === */}
           <button 
             onClick={() => handleTabChange('summary')}
             className={`px-6 py-4 font-extrabold whitespace-nowrap transition-colors ${activeTab === 'summary' ? 'text-blue-600 border-b-4 border-blue-600 bg-blue-50' : 'text-gray-500 hover:bg-gray-50'}`}
@@ -419,7 +473,6 @@ export default function SalesPage() {
             <p className="text-center text-gray-500 py-10">조건에 맞는 내역이 없습니다.</p>
           ) : (
             <>
-              {/* 1. 거래처별 집계 탭 */}
               {activeTab === 'summary' && (
                 <div className="overflow-x-auto animate-fade-in-up">
                   <p className="text-sm text-gray-500 mb-3 font-bold">* [목록 보기]를 클릭하면 해당 업체의 명세서 목록만 필터링되어 나타납니다.</p>
@@ -431,7 +484,6 @@ export default function SalesPage() {
                         <th className="p-3 text-right">매출금액 (공급가)</th>
                         <th className="p-3 text-right">매출세액 (VAT)</th>
                         <th className="p-3 text-right">매출합계</th>
-                        {/* === 수정 1: 버튼 칸 너비(w-28) 확장 및 정렬 === */}
                         <th className="p-3 text-center w-28 whitespace-nowrap">관리</th>
                       </tr>
                     </thead>
@@ -445,7 +497,6 @@ export default function SalesPage() {
                           <td className="p-3 text-right font-extrabold text-blue-700 bg-blue-50/30">
                             {client.total.toLocaleString()}원
                           </td>
-                          {/* === 수정 1: 버튼 줄바꿈 방지(whitespace-nowrap) === */}
                           <td className="p-3 text-center whitespace-nowrap">
                             <button 
                               onClick={() => handleClientClick(client.id, client.name)}
@@ -461,7 +512,6 @@ export default function SalesPage() {
                 </div>
               )}
 
-              {/* 2. 품목별 상세 내역 탭 */}
               {activeTab === 'items' && (
                 <div className="overflow-x-auto animate-fade-in-up">
                   <table className="w-full border-collapse min-w-[800px]">
@@ -493,7 +543,6 @@ export default function SalesPage() {
                 </div>
               )}
 
-              {/* 3. 명세서 목록 탭 */}
               {activeTab === 'list' && (
                 <div className="animate-fade-in-up">
                   <div className="hidden md:block overflow-x-auto">
