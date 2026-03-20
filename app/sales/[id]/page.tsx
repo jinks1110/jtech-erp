@@ -74,7 +74,6 @@ export default function InvoiceDetailPage() {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [isUploading, setIsUploading] = useState(false);
 
-  // === 신규: 깔끔한 커스텀 모달창 상태 관리 ===
   const [confirmModal, setConfirmModal] = useState({
     isOpen: false,
     title: '',
@@ -185,7 +184,6 @@ export default function InvoiceDetailPage() {
     }
   };
 
-  // === 수정: 명세서 복사에 커스텀 모달 적용 ===
   const handleCopyInvoice = () => {
     setConfirmModal({
       isOpen: true,
@@ -369,7 +367,6 @@ export default function InvoiceDetailPage() {
     }
   };
 
-  // === 수정: 첨부파일 삭제에 커스텀 모달 적용 ===
   const handleDeleteFile = (id: string, filePath: string) => {
     setConfirmModal({
       isOpen: true,
@@ -548,7 +545,6 @@ export default function InvoiceDetailPage() {
   return (
     <div className="p-4 md:p-8 bg-gray-100 min-h-screen text-black print:bg-white print:p-0 relative">
       
-      {/* === 핵심: pt-20을 적용한 세련된 모달창 렌더링 영역 === */}
       {confirmModal.isOpen && (
         <div className="fixed inset-0 z-[100] flex items-start justify-center pt-20 p-4 print:hidden">
           <div className="absolute inset-0 bg-transparent" onClick={closeModal}></div>
@@ -576,38 +572,41 @@ export default function InvoiceDetailPage() {
           }
           @keyframes fadeInUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
           .animate-fade-in-up { animation: fadeInUp 0.2s ease-out forwards; }
+          
+          /* === 추가: 모바일 스크롤바 커스텀 === */
+          .custom-scrollbar::-webkit-scrollbar { height: 8px; }
+          .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 4px; }
         `
       }} />
 
-      {/* 상단: 컨트롤 버튼 */}
-      <div className="max-w-4xl mx-auto mb-4 flex justify-between items-center print:hidden bg-white p-4 shadow rounded-lg">
-        <button onClick={() => router.back()} className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 transition text-sm font-bold">
+      {/* === 수정: 상단 버튼 모바일 자동 정렬 100% 복구 === */}
+      <div className="max-w-4xl mx-auto mb-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 print:hidden bg-white p-4 shadow rounded-lg">
+        <button onClick={() => router.back()} className="w-full sm:w-auto bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 transition text-sm font-bold">
           ← 목록으로 돌아가기
         </button>
-        <div className="space-x-2">
+        <div className="flex flex-wrap gap-2 w-full sm:w-auto justify-end">
           {!isEditing ? (
             <>
-              {/* 수정: 복사 버튼에 커스텀 모달 핸들러 연결 */}
-              <button onClick={handleCopyInvoice} className="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 transition font-bold text-sm shadow-md">
-                문서 복사하기
+              <button onClick={handleCopyInvoice} className="flex-1 sm:flex-none bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 transition font-bold text-sm shadow-md">
+                문서 복사
               </button>
-              <button onClick={startEditing} className="bg-yellow-500 text-white px-4 py-2 rounded hover:bg-yellow-600 transition font-bold text-sm shadow-md">
-                내용 수정하기
+              <button onClick={startEditing} className="flex-1 sm:flex-none bg-yellow-500 text-white px-4 py-2 rounded hover:bg-yellow-600 transition font-bold text-sm shadow-md">
+                내용 수정
               </button>
-              <button onClick={handleExcelExport} className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition font-bold text-sm shadow-md hidden sm:inline-block">
-                엑셀 다운로드
+              <button onClick={handleExcelExport} className="flex-1 sm:flex-none bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition font-bold text-sm shadow-md">
+                엑셀 다운
               </button>
-              <button onClick={handlePrint} className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 transition font-extrabold text-sm shadow-md animate-pulse hover:animate-none">
+              <button onClick={handlePrint} className="w-full sm:w-auto bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 transition font-extrabold text-sm shadow-md animate-pulse hover:animate-none">
                 🖨️ 명세서 인쇄
               </button>
             </>
           ) : (
             <>
-              <button onClick={() => setIsEditing(false)} className="bg-gray-400 text-white px-4 py-2 rounded hover:bg-gray-500 transition font-bold text-sm">
+              <button onClick={() => setIsEditing(false)} className="flex-1 sm:flex-none bg-gray-400 text-white px-4 py-2 rounded hover:bg-gray-500 transition font-bold text-sm">
                 수정 취소
               </button>
-              <button onClick={handleUpdate} disabled={isUpdating} className={`px-4 py-2 rounded text-white font-bold transition text-sm ${isUpdating ? 'bg-yellow-300' : 'bg-yellow-500 hover:bg-yellow-600'}`}>
-                {isUpdating ? '저장 중...' : '수정 완료 및 DB 저장'}
+              <button onClick={handleUpdate} disabled={isUpdating} className={`flex-1 sm:flex-none px-4 py-2 rounded text-white font-bold transition text-sm ${isUpdating ? 'bg-yellow-300' : 'bg-yellow-500 hover:bg-yellow-600'}`}>
+                {isUpdating ? '저장 중...' : '수정 완료'}
               </button>
             </>
           )}
@@ -615,10 +614,10 @@ export default function InvoiceDetailPage() {
       </div>
 
       {isEditing ? (
-        <div className="max-w-4xl mx-auto bg-white p-8 shadow-lg border-2 border-yellow-400 rounded-lg">
-          <h2 className="text-2xl font-bold mb-4 text-yellow-600 border-b pb-2">명세서 내용 수정</h2>
+        <div className="max-w-4xl mx-auto bg-white p-4 md:p-8 shadow-lg border-2 border-yellow-400 rounded-lg">
+          <h2 className="text-xl md:text-2xl font-bold mb-4 text-yellow-600 border-b pb-2">명세서 내용 수정</h2>
           
-          <div className="mb-6 bg-yellow-50 p-4 rounded-lg border border-yellow-200">
+          <div className="mb-4 md:mb-6 bg-yellow-50 p-4 rounded-lg border border-yellow-200">
             <label className="block text-sm font-bold text-gray-700 mb-2">발행 날짜 (작성일자) 변경</label>
             <input 
               type="date" 
@@ -693,32 +692,35 @@ export default function InvoiceDetailPage() {
               </tbody>
             </table>
           </div>
-          <button onClick={addEditItem} className="bg-gray-800 text-white px-4 py-2 rounded hover:bg-gray-700 transition font-bold text-sm">
+          <button onClick={addEditItem} className="w-full md:w-auto bg-gray-800 text-white px-6 py-3 md:py-2 rounded hover:bg-gray-700 transition font-bold text-sm">
             + 품목 줄 추가
           </button>
         </div>
       ) : (
-        <div className="max-w-4xl mx-auto flex flex-col items-center print-container">
-          <div className="w-full max-w-[210mm]">
-            {renderInvoiceHalf('공급자 보관용')}
-            
-            <div className="w-full border-b-2 border-dashed border-gray-400 relative my-2 print-cut">
-              <span className="absolute left-1/2 top-1/2 -translate-y-1/2 -translate-x-1/2 bg-gray-100 print:bg-white px-4 text-gray-500 font-bold text-sm">✂ 절취선 ✂</span>
-            </div>
+        /* === 핵심 수정: 모바일 뷰 찌그러짐 완벽 방어 (가로 스크롤 허용) === */
+        <div className="w-full overflow-x-auto pb-6 custom-scrollbar print:overflow-visible">
+          <div className="mx-auto flex flex-col items-center print-container w-[800px] min-w-[800px] print:w-full print:min-w-0">
+            <div className="w-full">
+              {renderInvoiceHalf('공급자 보관용')}
+              
+              <div className="w-full border-b-2 border-dashed border-gray-400 relative my-4 print-cut">
+                <span className="absolute left-1/2 top-1/2 -translate-y-1/2 -translate-x-1/2 bg-gray-100 print:bg-white px-4 text-gray-500 font-bold text-sm">✂ 절취선 ✂</span>
+              </div>
 
-            {renderInvoiceHalf('공급받는자 보관용')}
+              {renderInvoiceHalf('공급받는자 보관용')}
+            </div>
           </div>
         </div>
       )}
 
       {!isEditing && (
-        <div className="max-w-4xl mx-auto mt-6 bg-white p-6 shadow-lg rounded-lg print:hidden border border-gray-200">
+        <div className="max-w-4xl mx-auto mt-6 bg-white p-4 md:p-6 shadow-lg rounded-lg print:hidden border border-gray-200">
           <div className="flex justify-between items-center mb-4 border-b pb-2">
-            <h3 className="text-lg font-bold flex items-center">
+            <h3 className="text-base md:text-lg font-bold flex items-center">
               <span className="mr-2 text-xl">📎</span> 첨부파일 관리 (도면, 영수증, 문서 등)
             </h3>
             
-            <label className={`cursor-pointer bg-blue-50 text-blue-700 hover:bg-blue-100 font-bold py-2 px-4 rounded border border-blue-200 transition ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
+            <label className={`cursor-pointer bg-blue-50 text-blue-700 hover:bg-blue-100 font-bold py-2 px-3 md:px-4 rounded border border-blue-200 transition text-sm ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
               {isUploading ? '업로드 중...' : '+ 파일 추가'}
               <input 
                 type="file" 
@@ -743,7 +745,6 @@ export default function InvoiceDetailPage() {
                   >
                     📄 {file.file_name}
                   </a>
-                  {/* 수정: 첨부파일 삭제에 커스텀 모달 핸들러 연결 */}
                   <button 
                     onClick={() => handleDeleteFile(file.id, file.file_path)}
                     className="text-red-500 hover:text-red-700 font-bold text-xs bg-white px-2 py-1 rounded border border-red-200"

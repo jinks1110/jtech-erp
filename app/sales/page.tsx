@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import * as XLSX from 'xlsx';
 import Link from 'next/link';
@@ -16,7 +16,7 @@ interface Invoice {
   total_amount: number;
   client_id: string;
   clients: { name: string; };
-  invoice_items: { name: string; qty: number; }[];
+  invoice_items: { name: string; qty: number; price: number; }[];
 }
 
 export default function SalesPage() {
@@ -25,52 +25,57 @@ export default function SalesPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const [activeTab, setActiveTab] = useState<'list' | 'summary' | 'items'>('list');
+
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [selectedClientId, setSelectedClientId] = useState('');
 
+  const [filterSearchTerm, setFilterSearchTerm] = useState('');
+  const [showFilterDropdown, setShowFilterDropdown] = useState(false);
+  const filterWrapperRef = useRef<HTMLDivElement>(null);
+
   const [quickYear, setQuickYear] = useState(new Date().getFullYear().toString());
   const [quickMonth, setQuickMonth] = useState((new Date().getMonth() + 1).toString());
-
   const [companyName, setCompanyName] = useState('J-TECH');
 
-  // === 1. 정렬 상태 관리 추가 (기본값: 최신순 desc) ===
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
 
   const [confirmModal, setConfirmModal] = useState({
-    isOpen: false, title: '', desc: '', confirmText: '확인', confirmColor: 'bg-blue-600 hover:bg-blue-700',
-    onConfirm: async () => {}
+    isOpen: false, title: '', desc: '', confirmText: '확인', confirmColor: 'bg-blue-600 hover:bg-blue-700', onConfirm: async () => {}
   });
 
   const closeModal = () => setConfirmModal({ ...confirmModal, isOpen: false });
 
+  useEffect(() => { applyQuickFilter(quickYear, quickMonth); }, []);
+
   useEffect(() => {
-    applyQuickFilter(quickYear, quickMonth);
+    const handleClickOutside = (event: MouseEvent) => {
+      if (filterWrapperRef.current && !filterWrapperRef.current.contains(event.target as Node)) {
+        setShowFilterDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
   const applyQuickFilter = (year: string, month: string) => {
     if (!year) return;
     if (year && !month) {
-      setStartDate(`${year}-01-01`);
-      setEndDate(`${year}-12-31`);
+      setStartDate(`${year}-01-01`); setEndDate(`${year}-12-31`);
     } else if (year && month) {
       const paddedMonth = month.padStart(2, '0');
       const lastDay = new Date(Number(year), Number(month), 0).getDate();
-      setStartDate(`${year}-${paddedMonth}-01`);
-      setEndDate(`${year}-${paddedMonth}-${lastDay}`);
+      setStartDate(`${year}-${paddedMonth}-01`); setEndDate(`${year}-${paddedMonth}-${lastDay}`);
     }
   };
 
   const handleYearChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const y = e.target.value;
-    setQuickYear(y);
-    applyQuickFilter(y, quickMonth);
+    const y = e.target.value; setQuickYear(y); applyQuickFilter(y, quickMonth);
   };
 
   const handleMonthChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const m = e.target.value;
-    setQuickMonth(m);
-    applyQuickFilter(quickYear, m);
+    const m = e.target.value; setQuickMonth(m); applyQuickFilter(quickYear, m);
   };
 
   const fetchData = async () => {
@@ -85,16 +90,14 @@ export default function SalesPage() {
       const { data: compData } = await supabase.from('companies').select('name').eq('id', profile.company_id).single();
       if (compData && compData.name) setCompanyName(compData.name);
 
-      const { data: clientsData } = await supabase.from('clients').select('id, name').eq('company_id', profile.company_id).order('name', { ascending: true });
+      const { data: clientsData } = await supabase.from('clients')
+        .select('id, name').eq('company_id', profile.company_id).eq('is_active', true).order('name', { ascending: true });
       if (clientsData) setClients(clientsData);
 
-      // === 2. 핵심 수정: DB 쿼리에서 sortOrder를 직접 사용하도록 변경 ===
       let query = supabase.from('invoices').select(`
           id, invoice_no, created_at, supply_amount, vat_amount, total_amount, client_id,
-          clients ( name ), invoice_items ( name, qty )
-        `)
-        .eq('company_id', profile.company_id)
-        .order('created_at', { ascending: sortOrder === 'asc' }); // 정렬 상태 반영
+          clients ( name ), invoice_items ( name, qty, price )
+        `).eq('company_id', profile.company_id).order('created_at', { ascending: sortOrder === 'asc' });
 
       if (startDate) query = query.gte('created_at', `${startDate}T00:00:00Z`);
       if (endDate) query = query.lte('created_at', `${endDate}T23:59:59Z`);
@@ -103,7 +106,6 @@ export default function SalesPage() {
       const { data: invoicesData, error } = await query;
       if (error) throw error;
       
-      // === 3. 문제의 sortedData (오름차순 강제 고정 로직) 삭제함 ===
       setInvoices(invoicesData as unknown as Invoice[]);
 
     } catch (error: any) {
@@ -113,12 +115,9 @@ export default function SalesPage() {
     }
   };
 
-  // === 4. sortOrder가 바뀔 때도 데이터를 다시 불러오도록 감시 대상 추가 ===
   useEffect(() => { fetchData(); }, [startDate, endDate, selectedClientId, sortOrder]);
 
-  const toggleSort = () => {
-    setSortOrder(prev => prev === 'desc' ? 'asc' : 'desc');
-  };
+  const toggleSort = () => setSortOrder(prev => prev === 'desc' ? 'asc' : 'desc');
 
   const getProductName = (items: { name: string }[]) => {
     if (!items || items.length === 0) return '품목 없음';
@@ -159,62 +158,80 @@ export default function SalesPage() {
 
   const handleCopyInvoiceList = (invoiceId: string) => {
     setConfirmModal({
-      isOpen: true,
-      title: '명세서 복사',
-      desc: '이 명세서를 복사하여 새 명세서를 작성하시겠습니까?\n(작성일자는 오늘 날짜로 자동 세팅됩니다.)',
-      confirmText: '복사하기',
-      confirmColor: 'bg-purple-600 hover:bg-purple-700',
+      isOpen: true, title: '명세서 복사', desc: '이 명세서를 복사하여 새 명세서를 작성하시겠습니까?\n(작성일자는 오늘 날짜로 자동 세팅됩니다.)',
+      confirmText: '복사하기', confirmColor: 'bg-purple-600 hover:bg-purple-700',
       onConfirm: async () => {
         closeModal();
         try {
-          const { data: oldInvoice, error: invError } = await supabase.from('invoices').select('*').eq('id', invoiceId).single();
-          if (invError) throw invError;
-          const { data: oldItems, error: itemsError } = await supabase.from('invoice_items').select('*').eq('invoice_id', invoiceId);
-          if (itemsError) throw itemsError;
-
+          const { data: oldInvoice } = await supabase.from('invoices').select('*').eq('id', invoiceId).single();
+          const { data: oldItems } = await supabase.from('invoice_items').select('*').eq('invoice_id', invoiceId);
+          
           const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
           const randomStr = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
           const generatedInvoiceNo = `INV-${dateStr}-${randomStr}`;
 
-          const { data: newInvoice, error: insertInvError } = await supabase.from('invoices').insert([{
+          const { data: newInvoice } = await supabase.from('invoices').insert([{
             company_id: oldInvoice.company_id, client_id: oldInvoice.client_id, invoice_no: generatedInvoiceNo,
             supply_amount: oldInvoice.supply_amount, vat_amount: oldInvoice.vat_amount, total_amount: oldInvoice.total_amount
           }]).select().single();
-          if (insertInvError) throw insertInvError;
 
-          const itemsToInsert = oldItems.map(item => ({
+          const itemsToInsert = oldItems!.map(item => ({
             invoice_id: newInvoice.id, product_id: item.product_id, name: item.name, spec: item.spec, qty: item.qty, price: item.price
           }));
-          const { error: insertItemsError } = await supabase.from('invoice_items').insert(itemsToInsert);
-          if (insertItemsError) throw insertItemsError;
-
+          await supabase.from('invoice_items').insert(itemsToInsert);
           router.push(`/sales/${newInvoice.id}`);
-        } catch (error: any) {
-          alert('명세서 복사에 실패했습니다.');
-        }
+        } catch (error: any) { alert('명세서 복사에 실패했습니다.'); }
       }
     });
   };
 
   const handleDeleteInvoice = (invoiceId: string) => {
     setConfirmModal({
-      isOpen: true,
-      title: '명세서 영구 삭제',
-      desc: '정말 이 명세서를 삭제하시겠습니까?\n(경고: 관련된 품목 내역도 함께 영구 삭제되며 복구할 수 없습니다.)',
-      confirmText: '삭제하기',
-      confirmColor: 'bg-red-600 hover:bg-red-700',
+      isOpen: true, title: '명세서 영구 삭제', desc: '정말 이 명세서를 삭제하시겠습니까?\n(경고: 관련된 품목 내역도 함께 영구 삭제되며 복구할 수 없습니다.)',
+      confirmText: '삭제하기', confirmColor: 'bg-red-600 hover:bg-red-700',
       onConfirm: async () => {
         closeModal();
         try {
           await supabase.from('invoice_items').delete().eq('invoice_id', invoiceId);
           await supabase.from('invoices').delete().eq('id', invoiceId);
           fetchData(); 
-        } catch (error: any) {
-          alert('명세서 삭제에 실패했습니다.');
-        }
+        } catch (error: any) { alert('명세서 삭제에 실패했습니다.'); }
       }
     });
   };
+
+  const clientSummary = useMemo(() => {
+    const summary: Record<string, { id: string, name: string, supply: number, vat: number, total: number, count: number }> = {};
+    invoices.forEach(inv => {
+      const cName = inv.clients?.name || '삭제된 거래처';
+      if (!summary[cName]) {
+        summary[cName] = { id: inv.client_id, name: cName, supply: 0, vat: 0, total: 0, count: 0 };
+      }
+      summary[cName].supply += inv.supply_amount;
+      summary[cName].vat += inv.vat_amount;
+      summary[cName].total += inv.total_amount;
+      summary[cName].count += 1;
+    });
+    return Object.values(summary).sort((a, b) => b.total - a.total);
+  }, [invoices]);
+
+  const detailedItems = useMemo(() => {
+    const itemsList: any[] = [];
+    invoices.forEach(inv => {
+      inv.invoice_items.forEach(item => {
+        itemsList.push({
+          invoice_id: inv.id,
+          created_at: inv.created_at,
+          invoice_no: inv.invoice_no,
+          client_name: inv.clients?.name || '삭제된 거래처',
+          item_name: item.name,
+          qty: item.qty,
+          price: item.price || 0,
+        });
+      });
+    });
+    return itemsList;
+  }, [invoices]);
 
   const totalSupply = invoices.reduce((sum, inv) => sum + (inv.supply_amount || 0), 0);
   const totalVat = invoices.reduce((sum, inv) => sum + (inv.vat_amount || 0), 0);
@@ -226,6 +243,23 @@ export default function SalesPage() {
     if (!selectedClientId) return '전체 거래처';
     const client = clients.find(c => c.id === selectedClientId);
     return client ? client.name : '전체 거래처';
+  };
+
+  const filteredSearchClients = clients.filter(c => c.name.toLowerCase().includes(filterSearchTerm.toLowerCase()));
+
+  const handleClientClick = (clientId: string, clientName: string) => {
+    setSelectedClientId(clientId);
+    setFilterSearchTerm(clientName);
+    setActiveTab('list');
+  };
+
+  // === 수정 2: 탭 전환 시 거래처 필터를 초기화하여 "전체 집계"가 보이게 하는 함수 ===
+  const handleTabChange = (tab: 'list' | 'summary' | 'items') => {
+    if (tab === 'summary' || tab === 'items') {
+      setSelectedClientId('');
+      setFilterSearchTerm('');
+    }
+    setActiveTab(tab);
   };
 
   return (
@@ -260,6 +294,7 @@ export default function SalesPage() {
       }} />
 
       <div className="max-w-7xl mx-auto space-y-4 md:space-y-6 print:hidden">
+        
         <div className="bg-white p-4 md:p-6 shadow-lg rounded-lg">
           <div className="flex flex-col lg:flex-row justify-between items-start lg:items-end mb-4 md:mb-6 gap-4">
             <h1 className="text-xl md:text-2xl font-bold">매출 및 명세서 조회</h1>
@@ -298,12 +333,44 @@ export default function SalesPage() {
               <label className="block text-xs md:text-sm font-bold mb-1 text-gray-700">종료일</label>
               <input type="date" value={endDate} onChange={(e) => { setEndDate(e.target.value); setQuickMonth(''); }} className="w-full border rounded-lg p-2.5 outline-none focus:border-blue-500 bg-white" />
             </div>
-            <div>
+            <div className="relative" ref={filterWrapperRef}>
               <label className="block text-xs md:text-sm font-bold mb-1 text-gray-700">거래처 필터</label>
-              <select value={selectedClientId} onChange={(e) => setSelectedClientId(e.target.value)} className="w-full border rounded-lg p-2.5 outline-none focus:border-blue-500 bg-white">
-                <option value="">전체 거래처</option>
-                {clients.map(client => <option key={client.id} value={client.id}>{client.name}</option>)}
-              </select>
+              <input
+                type="text"
+                className="w-full border rounded-lg p-2.5 outline-none focus:border-blue-500 bg-white placeholder-gray-400 font-bold"
+                placeholder="전체 거래처 (클릭하여 검색)"
+                value={filterSearchTerm}
+                onChange={(e) => {
+                  setFilterSearchTerm(e.target.value);
+                  setShowFilterDropdown(true);
+                  if (e.target.value === '') setSelectedClientId(''); 
+                }}
+                onClick={() => setShowFilterDropdown(true)}
+              />
+              {showFilterDropdown && filteredSearchClients.length > 0 && (
+                <ul className="absolute z-20 w-full mt-1 bg-white border-2 border-blue-200 rounded-lg shadow-xl max-h-60 overflow-y-auto">
+                  <li 
+                    className="px-4 py-3 hover:bg-blue-50 cursor-pointer font-bold border-b text-gray-600 flex items-center justify-between"
+                    onClick={() => { setFilterSearchTerm(''); setSelectedClientId(''); setShowFilterDropdown(false); }}
+                  >
+                    <span>모든 거래처 보기 (초기화)</span>
+                    <span>↺</span>
+                  </li>
+                  {filteredSearchClients.map(client => (
+                    <li
+                      key={client.id}
+                      className="px-4 py-3 hover:bg-blue-50 cursor-pointer font-extrabold text-blue-900 border-b border-gray-100 last:border-b-0"
+                      onClick={() => {
+                        setFilterSearchTerm(client.name);
+                        setSelectedClientId(client.id);
+                        setShowFilterDropdown(false);
+                      }}
+                    >
+                      {client.name}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           </div>
         </div>
@@ -323,57 +390,189 @@ export default function SalesPage() {
           </div>
         </div>
 
-        <div className="bg-white p-4 md:p-6 shadow-lg rounded-lg">
+        <div className="bg-white shadow-lg rounded-t-lg border-b border-gray-200 flex overflow-x-auto">
+          {/* === 수정: 탭 전환 시 handleTabChange 호출로 필터 초기화 보장 === */}
+          <button 
+            onClick={() => handleTabChange('summary')}
+            className={`px-6 py-4 font-extrabold whitespace-nowrap transition-colors ${activeTab === 'summary' ? 'text-blue-600 border-b-4 border-blue-600 bg-blue-50' : 'text-gray-500 hover:bg-gray-50'}`}
+          >
+            🏢 거래처별 집계
+          </button>
+          <button 
+            onClick={() => handleTabChange('list')}
+            className={`px-6 py-4 font-extrabold whitespace-nowrap transition-colors ${activeTab === 'list' ? 'text-blue-600 border-b-4 border-blue-600 bg-blue-50' : 'text-gray-500 hover:bg-gray-50'}`}
+          >
+            📋 명세서 목록
+          </button>
+          <button 
+            onClick={() => handleTabChange('items')}
+            className={`px-6 py-4 font-extrabold whitespace-nowrap transition-colors ${activeTab === 'items' ? 'text-blue-600 border-b-4 border-blue-600 bg-blue-50' : 'text-gray-500 hover:bg-gray-50'}`}
+          >
+            📦 품목별 상세 내역
+          </button>
+        </div>
+
+        <div className="bg-white p-4 md:p-6 shadow-lg rounded-b-lg -mt-6">
           {loading ? (
             <p className="text-center text-gray-500 py-10">데이터를 불러오는 중입니다...</p>
           ) : invoices.length === 0 ? (
-            <p className="text-center text-gray-500 py-10">조건에 맞는 매출 내역이 없습니다.</p>
+            <p className="text-center text-gray-500 py-10">조건에 맞는 내역이 없습니다.</p>
           ) : (
-            <div className="hidden md:block overflow-x-auto">
-              <table className="w-full border-collapse min-w-[800px]">
-                <thead>
-                  <tr className="bg-gray-100 text-left text-sm border-b-2 border-gray-200">
-                    {/* === 정렬 버튼 추가 === */}
-                    <th className="p-3 cursor-pointer hover:bg-gray-200 transition select-none" onClick={toggleSort}>
-                      작성일자 {sortOrder === 'desc' ? '▼' : '▲'}
-                    </th>
-                    <th className="p-3">문서번호</th>
-                    <th className="p-3 w-48">품목명</th>
-                    <th className="p-3">거래처명</th>
-                    <th className="p-3 text-right">공급가액</th>
-                    <th className="p-3 text-right">부가세</th>
-                    <th className="p-3 text-right">총합계</th>
-                    <th className="p-3 text-center">관리</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {invoices.map((inv) => (
-                    <tr key={inv.id} className="border-b hover:bg-gray-50 transition text-sm">
-                      <td className="p-3 text-gray-600 whitespace-nowrap">{new Date(inv.created_at).toLocaleDateString()}</td>
-                      <td className="p-3 font-medium text-gray-900 whitespace-nowrap">{inv.invoice_no}</td>
-                      <td className="p-3 font-medium text-gray-700 truncate max-w-[200px]" title={getProductName(inv.invoice_items)}>
-                        {getProductName(inv.invoice_items)}
-                      </td>
-                      <td className="p-3 font-bold text-blue-800 whitespace-nowrap">{inv.clients?.name || '삭제된 거래처'}</td>
-                      <td className="p-3 text-right whitespace-nowrap">{inv.supply_amount.toLocaleString()}원</td>
-                      <td className="p-3 text-right text-gray-500 whitespace-nowrap">{inv.vat_amount.toLocaleString()}원</td>
-                      <td className="p-3 text-right font-bold text-green-700 whitespace-nowrap">{inv.total_amount.toLocaleString()}원</td>
-                      <td className="p-3 text-center space-x-1 whitespace-nowrap">
-                        <Link href={`/sales/${inv.id}`} className="inline-block text-blue-600 hover:text-blue-800 font-bold px-2 py-1 border border-blue-200 rounded bg-white text-xs hover:bg-blue-50 transition">보기</Link>
-                        <button onClick={() => handleCopyInvoiceList(inv.id)} className="inline-block text-purple-600 hover:text-purple-800 font-bold px-2 py-1 border border-purple-200 rounded bg-white text-xs hover:bg-purple-50 transition">복사</button>
-                        <button onClick={() => handleDeleteInvoice(inv.id)} className="inline-block text-red-500 hover:text-red-700 font-bold px-2 py-1 border border-red-200 rounded bg-white text-xs hover:bg-red-50 transition">삭제</button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <>
+              {/* 1. 거래처별 집계 탭 */}
+              {activeTab === 'summary' && (
+                <div className="overflow-x-auto animate-fade-in-up">
+                  <p className="text-sm text-gray-500 mb-3 font-bold">* [목록 보기]를 클릭하면 해당 업체의 명세서 목록만 필터링되어 나타납니다.</p>
+                  <table className="w-full border-collapse min-w-[700px]">
+                    <thead>
+                      <tr className="bg-gray-100 text-left text-sm border-b-2 border-gray-300">
+                        <th className="p-3">상호명</th>
+                        <th className="p-3 text-center">명세서 건수</th>
+                        <th className="p-3 text-right">매출금액 (공급가)</th>
+                        <th className="p-3 text-right">매출세액 (VAT)</th>
+                        <th className="p-3 text-right">매출합계</th>
+                        {/* === 수정 1: 버튼 칸 너비(w-28) 확장 및 정렬 === */}
+                        <th className="p-3 text-center w-28 whitespace-nowrap">관리</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {clientSummary.map((client, idx) => (
+                        <tr key={client.id} className="border-b hover:bg-blue-50 transition text-sm">
+                          <td className="p-3 font-extrabold text-gray-800">{idx + 1}. {client.name}</td>
+                          <td className="p-3 text-center font-bold text-gray-500">{client.count}건</td>
+                          <td className="p-3 text-right text-gray-700">{client.supply.toLocaleString()}</td>
+                          <td className="p-3 text-right text-gray-500">{client.vat.toLocaleString()}</td>
+                          <td className="p-3 text-right font-extrabold text-blue-700 bg-blue-50/30">
+                            {client.total.toLocaleString()}원
+                          </td>
+                          {/* === 수정 1: 버튼 줄바꿈 방지(whitespace-nowrap) === */}
+                          <td className="p-3 text-center whitespace-nowrap">
+                            <button 
+                              onClick={() => handleClientClick(client.id, client.name)}
+                              className="bg-white text-blue-600 border border-blue-200 px-3 py-1.5 rounded text-xs font-bold hover:bg-blue-50 transition shadow-sm whitespace-nowrap"
+                            >
+                              목록 보기
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* 2. 품목별 상세 내역 탭 */}
+              {activeTab === 'items' && (
+                <div className="overflow-x-auto animate-fade-in-up">
+                  <table className="w-full border-collapse min-w-[800px]">
+                    <thead>
+                      <tr className="bg-gray-100 text-left text-sm border-b-2 border-gray-300">
+                        <th className="p-3">작성일자</th>
+                        <th className="p-3">거래처명</th>
+                        <th className="p-3">문서번호</th>
+                        <th className="p-3 w-48">품목명</th>
+                        <th className="p-3 text-right">수량</th>
+                        <th className="p-3 text-right">단가</th>
+                        <th className="p-3 text-right">공급가액</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {detailedItems.map((item, idx) => (
+                        <tr key={idx} className="border-b hover:bg-gray-50 transition text-sm">
+                          <td className="p-3 text-gray-600 whitespace-nowrap">{new Date(item.created_at).toLocaleDateString()}</td>
+                          <td className="p-3 font-bold text-blue-800 whitespace-nowrap">{item.client_name}</td>
+                          <td className="p-3 font-medium text-gray-500 whitespace-nowrap">{item.invoice_no}</td>
+                          <td className="p-3 font-extrabold text-gray-800">{item.item_name}</td>
+                          <td className="p-3 text-right font-bold text-indigo-600">{item.qty.toLocaleString()}</td>
+                          <td className="p-3 text-right text-gray-600">{item.price.toLocaleString()}원</td>
+                          <td className="p-3 text-right font-bold text-gray-800">{(item.qty * item.price).toLocaleString()}원</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* 3. 명세서 목록 탭 */}
+              {activeTab === 'list' && (
+                <div className="animate-fade-in-up">
+                  <div className="hidden md:block overflow-x-auto">
+                    <table className="w-full border-collapse min-w-[800px]">
+                      <thead>
+                        <tr className="bg-gray-100 text-left text-sm border-b-2 border-gray-200">
+                          <th className="p-3 cursor-pointer hover:bg-gray-200 transition select-none" onClick={toggleSort}>
+                            작성일자 {sortOrder === 'desc' ? '▼' : '▲'}
+                          </th>
+                          <th className="p-3">문서번호</th>
+                          <th className="p-3 w-48">품목명</th>
+                          <th className="p-3">거래처명</th>
+                          <th className="p-3 text-right">공급가액</th>
+                          <th className="p-3 text-right">부가세</th>
+                          <th className="p-3 text-right">총합계</th>
+                          <th className="p-3 text-center">관리</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {invoices.map((inv) => (
+                          <tr key={inv.id} className="border-b hover:bg-gray-50 transition text-sm">
+                            <td className="p-3 text-gray-600 whitespace-nowrap">{new Date(inv.created_at).toLocaleDateString()}</td>
+                            <td className="p-3 font-medium text-gray-900 whitespace-nowrap">{inv.invoice_no}</td>
+                            <td className="p-3 font-medium text-gray-700 truncate max-w-[200px]" title={getProductName(inv.invoice_items)}>
+                              {getProductName(inv.invoice_items)}
+                            </td>
+                            <td className="p-3 font-bold text-blue-800 whitespace-nowrap">{inv.clients?.name || '삭제된 거래처'}</td>
+                            <td className="p-3 text-right whitespace-nowrap">{inv.supply_amount.toLocaleString()}원</td>
+                            <td className="p-3 text-right text-gray-500 whitespace-nowrap">{inv.vat_amount.toLocaleString()}원</td>
+                            <td className="p-3 text-right font-bold text-green-700 whitespace-nowrap">{inv.total_amount.toLocaleString()}원</td>
+                            <td className="p-3 text-center space-x-1 whitespace-nowrap">
+                              <Link href={`/sales/${inv.id}`} className="inline-block text-blue-600 hover:text-blue-800 font-bold px-2 py-1 border border-blue-200 rounded bg-white text-xs hover:bg-blue-50 transition">보기</Link>
+                              <button onClick={() => handleCopyInvoiceList(inv.id)} className="inline-block text-purple-600 hover:text-purple-800 font-bold px-2 py-1 border border-purple-200 rounded bg-white text-xs hover:bg-purple-50 transition">복사</button>
+                              <button onClick={() => handleDeleteInvoice(inv.id)} className="inline-block text-red-500 hover:text-red-700 font-bold px-2 py-1 border border-red-200 rounded bg-white text-xs hover:bg-red-50 transition">삭제</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="md:hidden space-y-4">
+                    {invoices.map((inv) => (
+                      <div key={inv.id} className="bg-white border-2 border-gray-200 rounded-xl p-4 shadow-sm relative">
+                        <div className="flex justify-between items-center mb-3 border-b border-dashed pb-2">
+                          <span className="text-sm font-medium text-gray-500">{new Date(inv.created_at).toLocaleDateString()}</span>
+                          <span className="text-xs font-bold text-gray-400 bg-gray-100 px-2 py-1 rounded">{inv.invoice_no}</span>
+                        </div>
+                        <div className="mb-4">
+                          <h3 className="font-extrabold text-xl text-blue-800">{inv.clients?.name || '삭제된 거래처'}</h3>
+                          <p className="text-sm font-medium text-gray-600 mt-1 truncate">품목: {getProductName(inv.invoice_items)}</p>
+                        </div>
+                        <div className="flex justify-between items-end">
+                          <div className="text-sm text-gray-600 space-y-1">
+                            <p><span className="inline-block w-12 font-medium">공급가:</span> {inv.supply_amount.toLocaleString()}원</p>
+                            <p><span className="inline-block w-12 font-medium">부가세:</span> {inv.vat_amount.toLocaleString()}원</p>
+                          </div>
+                          <div className="text-right flex flex-col items-end">
+                            <p className="font-extrabold text-xl text-green-700 mb-2">{inv.total_amount.toLocaleString()}원</p>
+                            <div className="flex gap-2 mt-2">
+                              <button onClick={() => handleDeleteInvoice(inv.id)} className="bg-red-50 text-red-600 border border-red-200 px-3 py-2 rounded-lg text-sm font-bold transition hover:bg-red-100">삭제</button>
+                              <button onClick={() => handleCopyInvoiceList(inv.id)} className="bg-purple-50 text-purple-700 border border-purple-200 px-3 py-2 rounded-lg text-sm font-bold transition hover:bg-purple-100">복사</button>
+                              <Link href={`/sales/${inv.id}`} className="bg-blue-50 text-blue-700 border border-blue-200 px-3 py-2 rounded-lg text-sm font-bold text-center transition hover:bg-blue-100">보기</Link>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
 
       <div className="hidden print:block w-full max-w-none text-black print-table-wrapper">
         <h1 className="text-3xl font-extrabold text-center mb-6 tracking-widest underline underline-offset-8 decoration-2">매 출 원 장</h1>
+        
         <div className="flex justify-between items-end mb-4 font-bold text-sm">
           <div>
             <p className="mb-1">조회 기간 : {startDate} ~ {endDate}</p>
@@ -383,6 +582,7 @@ export default function SalesPage() {
             <p>공급자 : {companyName}</p>
           </div>
         </div>
+
         <table className="w-full border-collapse border border-black text-xs mb-2">
           <thead>
             <tr className="bg-gray-100 text-center font-bold">
@@ -397,7 +597,7 @@ export default function SalesPage() {
           <tbody>
             {invoices.map((inv) => (
               <tr key={inv.id}>
-                <td className="border border-black p-2 text-center">{new Date(inv.created_at).toLocaleDateString().slice(2)}</td>
+                <td className="border border-black p-2 text-center align-middle">{new Date(inv.created_at).toLocaleDateString().slice(2)}</td>
                 <td className="border border-black p-2 text-center font-bold">{inv.clients?.name || '-'}</td>
                 <td className="border border-black p-2 leading-relaxed">{getFullItemsDetails(inv.invoice_items)}</td>
                 <td className="border border-black p-2 text-right">{inv.supply_amount.toLocaleString()}</td>
@@ -410,6 +610,11 @@ export default function SalesPage() {
               <td className="border border-black p-3 text-right">{totalSupply.toLocaleString()}</td>
               <td className="border border-black p-3 text-right">{totalVat.toLocaleString()}</td>
               <td className="border border-black p-3 text-right">{grandTotal.toLocaleString()}</td>
+            </tr>
+            <tr className="border-none">
+              <td colSpan={6} className="border-none pt-6 pb-2 text-center text-sm text-gray-700 font-bold tracking-wide">
+                - 위 내용과 같이 매출 내역을 청구(보고)합니다 -
+              </td>
             </tr>
           </tbody>
         </table>
