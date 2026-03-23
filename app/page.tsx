@@ -13,14 +13,28 @@ interface Attachment {
   created_at: string;
 }
 
+// === 신규 추가: 알림창(메모) 인터페이스 ===
+interface Memo {
+  id: string;
+  content: string;
+  type: string;
+  created_at: string;
+}
+
 export default function MainPage() {
   const router = useRouter();
+  
+  // 기존 상태 유지
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [loading, setLoading] = useState(true);
-
   const [yearlySales, setYearlySales] = useState(0);
   const [monthlySales, setMonthlySales] = useState(0);
+
+  // === 신규 추가: 알림창 상태 관리 ===
+  const [memos, setMemos] = useState<Memo[]>([]);
+  const [memoContent, setMemoContent] = useState('');
+  const [memoType, setMemoType] = useState('공지사항');
 
   const fetchDashboardData = async () => {
     try {
@@ -35,6 +49,7 @@ export default function MainPage() {
       const { data: profile } = await supabase.from('profiles').select('company_id').eq('id', session.user.id).single();
       if (!profile) return;
 
+      // 1. 공용 문서 불러오기 (대표님 기존 로직 완벽 유지)
       const { data: attachData, error: attachError } = await supabase
         .from('attachments')
         .select('*')
@@ -46,6 +61,7 @@ export default function MainPage() {
         setAttachments(attachData);
       }
 
+      // 2. 매출 계산 불러오기 (대표님 기존 로직 완벽 유지)
       const currentYear = new Date().getFullYear();
       const currentMonth = new Date().getMonth() + 1; 
       const startDate = `${currentYear}-01-01T00:00:00Z`;
@@ -62,7 +78,6 @@ export default function MainPage() {
 
         invoiceData.forEach(inv => {
           yearly += inv.supply_amount || 0;
-          
           const invMonth = new Date(inv.created_at).getMonth() + 1;
           if (invMonth === currentMonth) {
             monthly += inv.supply_amount || 0;
@@ -71,6 +86,21 @@ export default function MainPage() {
 
         setYearlySales(yearly);
         setMonthlySales(monthly);
+      }
+
+      // === 3. 신규: 공지 및 메모장 데이터 불러오기 ===
+      try {
+        const { data: memoData, error: memoError } = await supabase
+          .from('dashboard_memos')
+          .select('*')
+          .eq('company_id', profile.company_id)
+          .order('created_at', { ascending: false });
+        if (memoError) throw memoError;
+        setMemos(memoData || []);
+      } catch (err) {
+        // 테이블 미생성 시 에러 방지용 임시 로컬 스토리지 백업
+        const localMemos = localStorage.getItem('jtech_memos');
+        if (localMemos) setMemos(JSON.parse(localMemos));
       }
 
     } catch (error) {
@@ -84,6 +114,7 @@ export default function MainPage() {
     fetchDashboardData();
   }, []);
 
+  // 공용 문서 업로드 (기존 유지)
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     try {
       if (!e.target.files || e.target.files.length === 0) return;
@@ -122,6 +153,7 @@ export default function MainPage() {
     }
   };
 
+  // 공용 문서 삭제 (기존 유지)
   const handleDeleteFile = async (id: string, filePath: string) => {
     if (!window.confirm('이 공용 문서를 삭제하시겠습니까?')) return;
     try {
@@ -136,7 +168,6 @@ export default function MainPage() {
 
   const handleLogout = async () => {
     if (!window.confirm('ERP 시스템에서 로그아웃 하시겠습니까?')) return;
-    
     try {
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
@@ -147,14 +178,47 @@ export default function MainPage() {
     }
   };
 
+  // === 신규: 메모 저장 및 삭제 로직 ===
+  const handleSaveMemo = async () => {
+    if (!memoContent.trim()) return;
+    const newMemo = { id: Date.now().toString(), content: memoContent, type: memoType, created_at: new Date().toISOString() };
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const { data: profile } = await supabase.from('profiles').select('company_id').eq('id', session!.user.id).single();
+
+      const { error } = await supabase.from('dashboard_memos').insert([{ company_id: profile!.company_id, content: memoContent, type: memoType }]);
+      if (error) throw error;
+      setMemos([newMemo, ...memos]);
+    } catch (err) {
+      const updated = [newMemo, ...memos];
+      setMemos(updated);
+      localStorage.setItem('jtech_memos', JSON.stringify(updated));
+    }
+    setMemoContent('');
+  };
+
+  const handleDeleteMemo = async (id: string) => {
+    try {
+      await supabase.from('dashboard_memos').delete().eq('id', id);
+      setMemos(memos.filter(m => m.id !== id));
+    } catch (err) {
+      const updated = memos.filter(m => m.id !== id);
+      setMemos(updated);
+      localStorage.setItem('jtech_memos', JSON.stringify(updated));
+    }
+  };
+
+  if (loading) return <div className="min-h-screen flex items-center justify-center font-bold text-gray-500">데이터를 불러오는 중입니다...</div>;
+
   return (
     <div className="min-h-screen bg-gray-100 p-4 md:p-8 text-black">
       <div className="max-w-6xl mx-auto space-y-6 md:space-y-8">
         
+        {/* 상단 헤더 영역 (기존 유지) */}
         <header className="bg-white p-4 md:p-6 rounded-lg shadow-md flex flex-col md:flex-row justify-between items-start md:items-center border-l-4 border-blue-600 gap-4">
           <div>
             <h1 className="text-2xl md:text-3xl font-extrabold text-gray-900">J-TECH 통합 ERP 시스템</h1>
-            <p className="text-sm md:text-base text-gray-500 mt-1 font-medium">환영합니다! 원하시는 업무를 선택해주세요.</p>
+            <p className="text-sm md:text-base text-gray-500 mt-1 font-medium">환영합니다! 원하시는 업무를 좌측 메뉴에서 선택해주세요.</p>
           </div>
           
           <div className="flex w-full md:w-auto gap-2">
@@ -173,6 +237,7 @@ export default function MainPage() {
           </div>
         </header>
 
+        {/* 매출 카드 (기존 디자인 및 데이터 유지) */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
           <div className="bg-white p-6 rounded-lg shadow-md border-l-4 border-indigo-500 flex items-center justify-between transition hover:shadow-lg">
             <div>
@@ -190,49 +255,55 @@ export default function MainPage() {
           </div>
         </div>
 
-        {/* === 수정: 핵심 메뉴 바로가기 (6개로 확장) === */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-          <Link href="/invoice" className="bg-white p-6 rounded-lg shadow hover:shadow-xl transition transform hover:-translate-y-1 group border-2 border-transparent hover:border-blue-400">
-            <div className="text-4xl mb-4 group-hover:scale-110 transition inline-block">✍️</div>
-            <h2 className="text-xl font-bold text-blue-700">명세서 작성</h2>
-            <p className="text-sm text-gray-500 mt-2">신규 거래명세표 입력 및 발행</p>
-          </Link>
+        {/* === 핵심 변경: 6개 버튼 자리에 공지/메모장 삽입 === */}
+        <div className="bg-white p-6 shadow-lg rounded-xl border border-gray-200 border-t-4 border-purple-600">
+          <div className="flex justify-between items-center mb-6 border-b border-dashed border-gray-300 pb-3">
+            <div>
+              <h2 className="text-xl font-extrabold text-gray-800 flex items-center gap-2">
+                <span>📢</span> 공지 및 업무 메모장
+              </h2>
+              <p className="text-sm text-gray-500 font-bold mt-1">업체 특이사항, 납품일자, 사내 공유 사항을 기록하세요.</p>
+            </div>
+          </div>
 
-          <Link href="/sales" className="bg-white p-6 rounded-lg shadow hover:shadow-xl transition transform hover:-translate-y-1 group border border-transparent hover:border-gray-200">
-            <div className="text-4xl mb-4 group-hover:scale-110 transition inline-block">📊</div>
-            <h2 className="text-xl font-bold text-gray-800">매출 및 내역 조회</h2>
-            <p className="text-sm text-gray-500 mt-2">과거 명세서 조회 및 엑셀 다운로드</p>
-          </Link>
+          <div className="flex flex-col md:flex-row gap-6">
+            <div className="w-full md:w-1/3 bg-gray-50 p-5 rounded-xl border border-gray-200 shadow-inner">
+              <label className="block text-sm font-bold text-gray-700 mb-2">분류 선택</label>
+              <select value={memoType} onChange={(e)=>setMemoType(e.target.value)} className="w-full p-2.5 rounded-lg border border-gray-300 mb-4 font-bold outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500 bg-white">
+                <option value="공지사항">📢 사내 공지사항</option>
+                <option value="납품일정">🚚 주요 납품일정</option>
+                <option value="특이사항">⚠️ 업체 특이사항</option>
+              </select>
 
-                    {/* 신규: 견적서 작성 */}
-          <Link href="/quotation" className="bg-white p-6 rounded-lg shadow hover:shadow-xl transition transform hover:-translate-y-1 group border-2 border-transparent hover:border-yellow-400">
-            <div className="text-4xl mb-4 group-hover:scale-110 transition inline-block">📝</div>
-            <h2 className="text-xl font-bold text-yellow-700">견적서 작성</h2>
-            <p className="text-sm text-gray-500 mt-2">신규 견적서 입력 및 PDF 발행</p>
-          </Link>
+              <label className="block text-sm font-bold text-gray-700 mb-2">내용 입력</label>
+              <textarea value={memoContent} onChange={(e)=>setMemoContent(e.target.value)} className="w-full p-3 rounded-lg border border-gray-300 mb-4 h-32 resize-none font-medium outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500 bg-white" placeholder="내용을 작성하세요..."></textarea>
+              <button onClick={handleSaveMemo} className="w-full bg-purple-600 hover:bg-purple-700 text-white font-extrabold py-3 rounded-lg shadow-md transition">등록하기</button>
+            </div>
 
-          {/* 신규: 견적내역 조회 */}
-          <Link href="/quotation-list" className="bg-white p-6 rounded-lg shadow hover:shadow-xl transition transform hover:-translate-y-1 group border border-transparent hover:border-gray-200">
-            <div className="text-4xl mb-4 group-hover:scale-110 transition inline-block">🗂️</div>
-            <h2 className="text-xl font-bold text-gray-800">견적내역 관리</h2>
-            <p className="text-sm text-gray-500 mt-2">발행된 견적서 조회 및 수정</p>
-          </Link>
-
-          <Link href="/clients" className="bg-white p-6 rounded-lg shadow hover:shadow-xl transition transform hover:-translate-y-1 group border border-transparent hover:border-gray-200">
-            <div className="text-4xl mb-4 group-hover:scale-110 transition inline-block">🏢</div>
-            <h2 className="text-xl font-bold text-gray-800">거래처 관리</h2>
-            <p className="text-sm text-gray-500 mt-2">신규 거래처 등록 및 비활성화 관리</p>
-          </Link>
-          
-          <Link href="/products" className="bg-white p-6 rounded-lg shadow hover:shadow-xl transition transform hover:-translate-y-1 group border border-transparent hover:border-gray-200">
-            <div className="text-4xl mb-4 group-hover:scale-110 transition inline-block">📦</div>
-            <h2 className="text-xl font-bold text-gray-800">품목 단가 관리</h2>
-            <p className="text-sm text-gray-500 mt-2">하네스 규격 및 단가표 업데이트</p>
-          </Link>
-
+            <div className="w-full md:w-2/3">
+               <div className="space-y-3 h-[320px] overflow-y-auto pr-2 border border-gray-100 rounded-xl p-2 bg-gray-50/50">
+                 {memos.length === 0 ? (
+                    <div className="h-full flex items-center justify-center text-gray-400 font-bold border-2 border-dashed border-gray-200 rounded-lg">등록된 업무 알림이 없습니다.</div>
+                 ) : (
+                    memos.map(memo => (
+                      <div key={memo.id} className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm flex items-start gap-4 hover:border-purple-300 transition group">
+                        <div className={`px-3 py-1.5 rounded-md text-xs font-extrabold shrink-0 shadow-sm ${memo.type === '납품일정' ? 'bg-blue-100 text-blue-700 border border-blue-200' : memo.type === '특이사항' ? 'bg-red-100 text-red-700 border border-red-200' : 'bg-green-100 text-green-700 border border-green-200'}`}>
+                          {memo.type}
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-gray-800 font-bold whitespace-pre-wrap leading-relaxed text-sm md:text-base">{memo.content}</p>
+                          <p className="text-xs text-gray-400 mt-2 font-medium">{new Date(memo.created_at).toLocaleString()}</p>
+                        </div>
+                        <button onClick={() => handleDeleteMemo(memo.id)} className="text-gray-300 hover:text-red-500 font-bold text-2xl px-2 opacity-0 group-hover:opacity-100 transition">&times;</button>
+                      </div>
+                    ))
+                 )}
+               </div>
+            </div>
+          </div>
         </div>
 
-        {/* 공용 자료실 */}
+        {/* === 공용 자료실 (대표님의 기존 렌더링 로직 완벽 유지) === */}
         <div className="bg-white p-4 md:p-6 rounded-lg shadow-md border border-gray-200">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 border-b pb-4 gap-4">
             <div>
@@ -247,9 +318,7 @@ export default function MainPage() {
             </label>
           </div>
 
-          {loading ? (
-            <p className="text-center text-gray-500 py-10">파일을 불러오는 중입니다...</p>
-          ) : attachments.length === 0 ? (
+          {attachments.length === 0 ? (
             <div className="text-center bg-gray-50 rounded-lg py-12 border-2 border-dashed border-gray-300">
               <span className="text-5xl mb-3 block text-gray-400">📭</span>
               <p className="text-gray-500 font-medium text-lg">등록된 공용 문서가 없습니다.</p>

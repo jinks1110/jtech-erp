@@ -4,177 +4,265 @@ import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 
-interface Client { id: string; name: string; business_number: string; }
-interface Product { id: string; name: string; spec: string; price: number; is_vat_included: boolean; }
-interface InvoiceItem { product_id: string; name: string; spec: string; qty: number; price: number; is_vat_included: boolean; }
+interface Client {
+  id: string;
+  name: string;
+}
 
-export default function InvoicePage() {
+interface Product {
+  id: string;
+  name: string;
+  price: number;
+  client_id: string; 
+}
+
+interface InvoiceItem {
+  id: string; 
+  product_id: string;
+  name: string;
+  qty: number;
+  price: number;
+}
+
+export default function InvoiceCreatePage() {
   const router = useRouter();
-  const [clients, setClients] = useState<Client[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
-  
-  // === 거래처 자동완성 검색 상태 ===
-  const [searchTerm, setSearchTerm] = useState('');
-  const [showDropdown, setShowDropdown] = useState(false);
-  const wrapperRef = useRef<HTMLDivElement>(null);
-
-  const [items, setItems] = useState<InvoiceItem[]>([{ product_id: '', name: '', spec: '', qty: 0, price: 0, is_vat_included: false }]);
+  const [loading, setLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
-  const [confirmModal, setConfirmModal] = useState({
-    isOpen: false, title: '', desc: '', isAlert: true, confirmText: '확인', confirmColor: 'bg-blue-600 hover:bg-blue-700', onConfirm: () => {}
+  // 데이터 상태
+  const [clients, setClients] = useState<Client[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+
+  // 거래처 검색 상태
+  const [clientSearchTerm, setClientSearchTerm] = useState('');
+  const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+  const [showClientDropdown, setShowClientDropdown] = useState(false);
+  const searchRef = useRef<HTMLDivElement>(null);
+  
+  // === 신규: 키보드 방향키 이동을 위한 상태 ===
+  const [highlightedIndex, setHighlightedIndex] = useState(-1);
+
+  // 품목 리스트 상태 
+  const [items, setItems] = useState<InvoiceItem[]>([
+    { id: Date.now().toString(), product_id: '', name: '', qty: 0, price: 0 }
+  ]);
+
+  // 공통 모달창
+  const [alertModal, setAlertModal] = useState({
+    isOpen: false, title: '', desc: '', onConfirm: () => {}
   });
 
-  const closeModal = () => setConfirmModal(prev => ({ ...prev, isOpen: false }));
-  const showAlert = (title: string, desc: string, onConfirm = closeModal) => {
-    setConfirmModal({ isOpen: true, title, desc, isAlert: true, confirmText: '확인', confirmColor: 'bg-blue-600 hover:bg-blue-700', onConfirm });
+  const closeAlert = () => setAlertModal(prev => ({ ...prev, isOpen: false }));
+  const showAlert = (title: string, desc: string, onConfirm = closeAlert) => {
+    setAlertModal({ isOpen: true, title, desc, onConfirm });
   };
 
   useEffect(() => {
     const fetchData = async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession();
-        if (!session) return;
-        const { data } = await supabase.from('profiles').select('company_id').eq('id', session.user.id).single();
-        const profile = data as { company_id: string } | null;
+        if (!session) {
+          router.push('/login');
+          return;
+        }
+
+        const { data: profile } = await supabase.from('profiles').select('company_id').eq('id', session.user.id).single();
         if (!profile) return;
 
-        const { data: clientsData } = await supabase.from('clients').select('id, name, business_number').eq('company_id', profile.company_id).eq('is_active', true).order('name', { ascending: true });
-        const { data: productsData } = await supabase.from('products').select('*').eq('company_id', profile.company_id).eq('is_active', true).order('name', { ascending: true });
+        const { data: clientData } = await supabase.from('clients')
+          .select('id, name')
+          .eq('company_id', profile.company_id)
+          .eq('is_active', true)
+          .order('name');
         
-        if (clientsData) setClients(clientsData);
-        if (productsData) setProducts(productsData);
+        if (clientData) setClients(clientData);
+
+        const { data: productData } = await supabase.from('products')
+          .select('id, name, price, client_id')
+          .eq('company_id', profile.company_id)
+          .eq('is_active', true);
+
+        if (productData) setProducts(productData);
+
       } catch (error) {
-        console.error("데이터 로드 실패:", error);
+        console.error('데이터 로딩 에러:', error);
+      } finally {
+        setLoading(false);
       }
     };
     fetchData();
-  }, []);
+  }, [router]);
 
-  // 외부 클릭 시 검색 드롭다운 닫기
+  // 외부 클릭 시 거래처 검색 드롭다운 닫기
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) {
-        setShowDropdown(false);
+      if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
+        setShowClientDropdown(false);
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const filteredClients = clients.filter(c => c.name.toLowerCase().includes(searchTerm.toLowerCase()));
+  const filteredClients = clients.filter(c => c.name.toLowerCase().includes(clientSearchTerm.toLowerCase()));
 
-  const addItem = () => setItems([...items, { product_id: '', name: '', spec: '', qty: 0, price: 0, is_vat_included: false }]);
-  const removeItem = (index: number) => {
-    if (items.length === 1) return;
-    const newItems = [...items]; newItems.splice(index, 1); setItems(newItems);
-  };
-  const copyItem = (index: number) => {
-    const itemToCopy = items[index];
-    const newItems = [...items]; newItems.splice(index + 1, 0, { ...itemToCopy }); setItems(newItems);
+  const filteredProducts = selectedClient 
+    ? products.filter(p => p.client_id === selectedClient.id)
+    : []; 
+
+  const handleClientSelect = (client: Client) => {
+    setSelectedClient(client);
+    setClientSearchTerm(client.name);
+    setShowClientDropdown(false);
+    setHighlightedIndex(-1); // 선택 완료 시 방향키 초기화
   };
 
-  const handleProductSelect = (index: number, productId: string) => {
-    const selectedProduct = products.find(p => p.id === productId);
-    const newItems = [...items];
-    if (selectedProduct) {
-      newItems[index] = {
-        product_id: selectedProduct.id, name: selectedProduct.name, spec: selectedProduct.spec || '',
-        qty: newItems[index].qty === 0 ? 1 : newItems[index].qty, price: selectedProduct.price, is_vat_included: selectedProduct.is_vat_included
-      };
-    } else {
-      newItems[index] = { product_id: '', name: '', spec: '', qty: 0, price: 0, is_vat_included: false };
+  const handleClientSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setClientSearchTerm(e.target.value);
+    setShowClientDropdown(true);
+    setHighlightedIndex(-1); // 검색어가 바뀌면 방향키 위치 초기화
+    if (e.target.value !== selectedClient?.name) {
+      setSelectedClient(null); 
     }
+  };
+
+  // === 신규: 키보드 조작 핸들러 ===
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!showClientDropdown || filteredClients.length === 0) return;
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault(); // 커서 이동 방지
+      setHighlightedIndex(prev => (prev < filteredClients.length - 1 ? prev + 1 : prev));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlightedIndex(prev => (prev > 0 ? prev - 1 : 0));
+    } else if (e.key === 'Enter') {
+      e.preventDefault(); // 폼 제출 방지
+      if (highlightedIndex >= 0 && highlightedIndex < filteredClients.length) {
+        handleClientSelect(filteredClients[highlightedIndex]);
+      }
+    } else if (e.key === 'Escape') {
+      setShowClientDropdown(false);
+      setHighlightedIndex(-1);
+    }
+  };
+
+  const addItemRow = () => {
+    setItems([...items, { id: Date.now().toString(), product_id: '', name: '', qty: 0, price: 0 }]);
+  };
+
+  const copyItemRow = (index: number) => {
+    const itemToCopy = items[index];
+    const newItems = [...items];
+    newItems.splice(index + 1, 0, { ...itemToCopy, id: Date.now().toString() });
     setItems(newItems);
   };
 
-  let supplyTotal = 0; let vatTotal = 0;
-  items.forEach(item => {
-    const lineTotal = item.qty * item.price;
-    if (item.is_vat_included) {
-      const supply = Math.round(lineTotal / 1.1); supplyTotal += supply; vatTotal += (lineTotal - supply);
-    } else {
-      supplyTotal += lineTotal; vatTotal += Math.round(lineTotal * 0.1);
-    }
-  });
-  const grandTotal = supplyTotal + vatTotal;
-
-  const handleSave = async () => {
-    if (!searchTerm.trim()) {
-      showAlert('입력 오류', '거래처명을 검색하여 선택하거나 직접 입력해주세요.');
+  const removeItemRow = (id: string) => {
+    if (items.length === 1) {
+      setItems([{ id: Date.now().toString(), product_id: '', name: '', qty: 0, price: 0 }]);
       return;
     }
-    if (items.some(item => !item.name || item.qty <= 0)) { 
-      showAlert('입력 오류', '품목명과 수량을 올바르게 입력해주세요.'); 
-      return; 
+    setItems(items.filter(item => item.id !== id));
+  };
+
+  const handleItemChange = (index: number, field: keyof InvoiceItem, value: string | number) => {
+    const newItems = [...items];
+    
+    if (field === 'product_id') {
+      if (value === '') {
+        newItems[index].product_id = '';
+        newItems[index].name = '';
+        newItems[index].price = 0;
+      } else {
+        const selectedProd = products.find(p => p.id === value);
+        if (selectedProd) {
+          newItems[index].product_id = selectedProd.id;
+          newItems[index].name = selectedProd.name;
+          newItems[index].price = selectedProd.price;
+        }
+      }
+    } else {
+      newItems[index] = { ...newItems[index], [field]: value };
+    }
+    
+    setItems(newItems);
+  };
+
+  const totalSupply = items.reduce((sum, item) => sum + (item.qty * item.price), 0);
+  const totalVat = Math.floor(totalSupply * 0.1);
+  const grandTotal = totalSupply + totalVat;
+
+  const handleSaveInvoice = async () => {
+    if (!selectedClient) {
+      showAlert('확인 필요', '거래처를 먼저 검색하여 선택해주세요.');
+      return;
+    }
+
+    const validItems = items.filter(item => item.name.trim() !== '' && item.qty > 0);
+    if (validItems.length === 0) {
+      showAlert('확인 필요', '최소 1개 이상의 유효한 품목(수량 1 이상)을 입력해주세요.');
+      return;
     }
 
     try {
       setIsSaving(true);
       const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error('로그인 세션 만료');
-
-      const { data } = await supabase.from('profiles').select('company_id').eq('id', session.user.id).single();
-      const profile = data as { company_id: string } | null;
-      if (!profile) throw new Error("회사 정보 없음");
-
-      let finalClientId = '';
-      const existingClient = clients.find(c => c.name === searchTerm.trim());
-      
-      if (existingClient) {
-        finalClientId = existingClient.id; 
-      } else {
-        const { data: newClient, error: clientErr } = await supabase
-          .from('clients')
-          .insert([{ company_id: profile.company_id, name: searchTerm.trim(), is_active: true }])
-          .select()
-          .single();
-        if (clientErr) throw clientErr;
-        finalClientId = newClient.id;
-      }
+      const { data: profile } = await supabase.from('profiles').select('company_id').eq('id', session!.user.id).single();
 
       const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-      const randomStr = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-      const generatedInvoiceNo = `INV-${dateStr}-${randomStr}`;
+      const randomStr = Math.floor(1000 + Math.random() * 9000).toString();
+      const invoiceNo = `INV-${dateStr}-${randomStr}`;
 
-      const { data: invoiceData, error: invoiceError } = await supabase.from('invoices').insert([{
-        company_id: profile.company_id, client_id: finalClientId, invoice_no: generatedInvoiceNo,
-        supply_amount: supplyTotal, vat_amount: vatTotal, total_amount: grandTotal
+      const { data: newInvoice, error: invoiceError } = await supabase.from('invoices').insert([{
+        company_id: profile!.company_id,
+        client_id: selectedClient.id,
+        invoice_no: invoiceNo,
+        supply_amount: totalSupply,
+        vat_amount: totalVat,
+        total_amount: grandTotal
       }]).select().single();
+
       if (invoiceError) throw invoiceError;
 
-      const itemsToInsert = items.map(item => ({
-        invoice_id: invoiceData.id, product_id: item.product_id || null, name: item.name, spec: item.spec, qty: item.qty, price: item.price
+      const itemsToInsert = validItems.map(item => ({
+        invoice_id: newInvoice.id,
+        product_id: item.product_id || null, 
+        name: item.name,
+        qty: item.qty,
+        price: item.price
       }));
 
       const { error: itemsError } = await supabase.from('invoice_items').insert(itemsToInsert);
       if (itemsError) throw itemsError;
 
-      showAlert('발행 완료', '명세서가 성공적으로 발행되었습니다!\n발행된 명세서 화면으로 이동합니다.', () => {
-        closeModal();
-        router.push(`/sales/${invoiceData.id}`);
+      showAlert('발행 완료', '명세서가 성공적으로 발행 및 저장되었습니다.', () => {
+        closeAlert();
+        router.push('/sales'); 
       });
 
-    } catch (error: any) {
-      showAlert('저장 실패', '저장에 실패했습니다. ' + error.message);
+    } catch (error) {
+      console.error(error);
+      showAlert('저장 실패', '명세서 저장 중 오류가 발생했습니다.');
     } finally {
       setIsSaving(false);
     }
   };
 
+  if (loading) return <div className="min-h-screen flex items-center justify-center font-bold text-gray-500">로딩 중...</div>;
+
   return (
-    <div className="p-4 md:p-8 bg-gray-50 min-h-screen text-black relative">
+    <div className="min-h-screen bg-gray-50 p-4 md:p-8 text-black relative">
       
-      {/* 커스텀 모달 (pt-20 적용) */}
-      {confirmModal.isOpen && (
-        <div className="fixed inset-0 z-[100] flex items-start justify-center pt-20 p-4 print:hidden">
-          <div className="absolute inset-0 bg-transparent" onClick={closeModal}></div>
-          <div className="relative bg-white rounded-2xl shadow-[0_20px_60px_-15px_rgba(0,0,0,0.3)] border-2 border-gray-200 p-6 w-full max-w-sm animate-fade-in-up z-10">
-            <h3 className="text-xl font-extrabold text-gray-900 mb-2">{confirmModal.title}</h3>
-            <p className="text-gray-600 mb-6 whitespace-pre-line text-sm leading-relaxed">{confirmModal.desc}</p>
-            <div className="flex justify-end gap-3">
-              {!confirmModal.isAlert && <button onClick={closeModal} className="px-4 py-2 rounded-lg font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 transition">취소</button>}
-              <button onClick={confirmModal.onConfirm} className={`px-4 py-2 rounded-lg font-bold text-white transition shadow-md ${confirmModal.confirmColor}`}>{confirmModal.confirmText}</button>
+      {/* 커스텀 알림 모달 */}
+      {alertModal.isOpen && (
+        <div className="fixed inset-0 z-[100] flex items-start justify-center pt-20 p-4">
+          <div className="absolute inset-0 bg-black bg-opacity-30" onClick={closeAlert}></div>
+          <div className="relative bg-white rounded-2xl shadow-2xl border border-gray-200 p-6 w-full max-w-sm animate-fade-in-up z-10">
+            <h3 className="text-xl font-extrabold text-gray-900 mb-2">{alertModal.title}</h3>
+            <p className="text-gray-600 mb-6 font-medium text-sm whitespace-pre-line">{alertModal.desc}</p>
+            <div className="flex justify-end">
+              <button onClick={alertModal.onConfirm} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-5 rounded-lg shadow-md transition">확인</button>
             </div>
           </div>
         </div>
@@ -182,176 +270,158 @@ export default function InvoicePage() {
 
       <style dangerouslySetInnerHTML={{ __html: `@keyframes fadeInUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } } .animate-fade-in-up { animation: fadeInUp 0.2s ease-out forwards; }` }} />
 
-      <div className="max-w-5xl mx-auto bg-white p-4 md:p-8 shadow-xl rounded-2xl border-t-4 border-blue-600">
-        <h1 className="text-xl md:text-2xl font-bold mb-4 md:mb-6 border-b pb-3 flex items-center">
-          <span className="mr-2 text-3xl">✍️</span> 신규 거래명세표 작성
-        </h1>
+      <div className="max-w-5xl mx-auto space-y-6">
         
-        {/* === 거래처 자동완성 검색창 (너비 맞춤 수정 완료) === */}
-        <div className="mb-8 bg-blue-50 p-5 rounded-xl border border-blue-100 shadow-sm">
-          <label className="block text-sm font-bold text-gray-700 mb-2">거래처 검색 (일부만 입력해도 찾아줍니다)</label>
-          <div className="relative w-full" ref={wrapperRef}>
-            <input
-              type="text"
-              className="w-full border-2 border-blue-300 rounded-lg p-3 outline-none focus:ring-2 focus:ring-blue-600 bg-white text-base md:text-sm font-bold shadow-inner transition"
-              placeholder="🔍 예: 삼덕전기"
-              value={searchTerm}
-              onChange={(e) => {
-                setSearchTerm(e.target.value);
-                setShowDropdown(true);
-              }}
-              onClick={() => setShowDropdown(true)}
-            />
-            
-            {/* 드롭다운 너비를 w-full로 고정하여 입력창과 완벽 일치 */}
-            {showDropdown && filteredClients.length > 0 && (
+        {/* 타이틀 */}
+        <div className="bg-white p-6 shadow-lg rounded-xl border-t-4 border-blue-600 flex items-center gap-3">
+          <span className="text-3xl">✍️</span>
+          <h1 className="text-2xl font-extrabold text-gray-900">신규 거래명세표 작성</h1>
+        </div>
+
+        <div className="bg-white p-6 shadow-lg rounded-xl border border-gray-200">
+          {/* 거래처 검색 폼 */}
+          <div className="bg-blue-50/50 border border-blue-100 p-5 rounded-lg mb-8 relative" ref={searchRef}>
+            <label className="block text-sm font-bold text-gray-700 mb-2">거래처 검색 (일부만 입력해도 찾아줍니다)</label>
+            <div className="relative">
+              <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400 font-bold">🔍</span>
+              <input
+                type="text"
+                value={clientSearchTerm}
+                onChange={handleClientSearchChange}
+                onClick={() => setShowClientDropdown(true)}
+                onKeyDown={handleKeyDown} // === 핵심: 키보드 이벤트 연결 ===
+                className="w-full pl-10 pr-4 py-3 rounded-lg border-2 border-blue-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none font-bold text-gray-800 bg-white"
+                placeholder="예: 삼덕전기"
+              />
+            </div>
+            <p className="text-xs text-blue-600 font-bold mt-2">* 초성이나 단어 일부만 치시면 목록이 나타납니다. (방향키 ↓ ↑ 및 엔터로 선택 가능)</p>
+
+            {/* 자동완성 드롭다운 */}
+            {showClientDropdown && filteredClients.length > 0 && (
               <ul className="absolute z-20 w-full left-0 mt-1 bg-white border-2 border-blue-200 rounded-lg shadow-xl max-h-60 overflow-y-auto">
-                {filteredClients.map(client => (
+                {filteredClients.map((client, index) => (
                   <li
                     key={client.id}
-                    className="px-4 py-3 hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-b-0 transition flex justify-between items-center"
-                    onClick={() => {
-                      setSearchTerm(client.name);
-                      setShowDropdown(false);
-                    }}
+                    className={`px-4 py-3 cursor-pointer font-extrabold text-blue-900 border-b border-gray-100 last:border-b-0 transition-colors ${
+                      highlightedIndex === index ? 'bg-blue-100' : 'hover:bg-blue-50'
+                    }`} // === 핵심: 키보드로 선택된 항목에 파란 배경색(bg-blue-100) 부여 ===
+                    onClick={() => handleClientSelect(client)}
+                    onMouseEnter={() => setHighlightedIndex(index)} // 마우스를 올리면 키보드 커서도 따라오도록 동기화
                   >
-                    <span className="font-bold text-gray-800">{client.name}</span>
-                    <span className="text-xs text-gray-400 font-medium bg-gray-100 px-2 py-1 rounded">{client.business_number || '사업자번호 없음'}</span>
+                    {client.name}
                   </li>
                 ))}
               </ul>
             )}
-            {showDropdown && searchTerm && filteredClients.length === 0 && (
-              <div className="absolute z-20 w-full left-0 mt-1 bg-white border-2 border-yellow-200 rounded-lg shadow-xl p-4 text-center">
-                <p className="text-sm font-bold text-gray-600">검색된 거래처가 없습니다.</p>
-                <p className="text-xs text-yellow-600 mt-1">이대로 저장하시면 '{searchTerm}' 이름으로 새 거래처가 등록됩니다.</p>
-              </div>
-            )}
           </div>
-          <p className="text-xs text-blue-600 mt-2 font-bold">
-            * 초성이나 단어 일부만 치시면 목록이 나타납니다. (기존 이름과 똑같이 치면 중복 등록되지 않습니다.)
-          </p>
-        </div>
 
-        {/* === 데스크탑 뷰 (견적서 폼과 100% 동일하게 복구) === */}
-        <div className="hidden md:block overflow-x-auto mb-6 shadow-sm rounded-lg border border-gray-200">
-          <table className="w-full border-collapse min-w-[750px]">
-            <thead>
-              <tr className="bg-gray-100 text-left text-sm border-b-2 border-gray-300">
-                <th className="p-3 border-r">품목 불러오기</th>
-                <th className="p-3 border-r w-48">품명 <span className="text-blue-600 text-xs">(직접입력 가능)</span></th>
-                <th className="p-3 border-r w-24 text-center">수량</th>
-                <th className="p-3 border-r w-32 text-right">단가</th>
-                <th className="p-3 border-r w-32 text-right">공급가액</th>
-                <th className="p-3 w-28 text-center">관리</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((item, idx) => (
-                <tr key={idx} className="text-sm border-b bg-white hover:bg-gray-50 transition">
-                  <td className="border-r p-2">
-                    <select className="w-full outline-none bg-transparent p-1 cursor-pointer" value={item.product_id} onChange={(e) => handleProductSelect(idx, e.target.value)}>
-                      <option value="">직접 입력</option>
-                      {products.map(p => <option key={p.id} value={p.id}>{p.name} {p.spec ? `(${p.spec})` : ''}</option>)}
-                    </select>
-                  </td>
-                  <td className="border-r p-2">
-                    <input type="text" className="w-full outline-none p-1 bg-transparent font-bold placeholder-gray-300" value={item.name} onChange={(e) => { const newItems = [...items]; newItems[idx].name = e.target.value; setItems(newItems); }} placeholder="품명 직접 타자" />
-                  </td>
-                  <td className="border-r p-2">
-                    <input type="number" className="w-full outline-none text-center p-1 bg-transparent font-medium" value={item.qty === 0 ? '' : item.qty} onChange={(e) => { const newItems = [...items]; newItems[idx].qty = Number(e.target.value); setItems(newItems); }} placeholder="0" />
-                  </td>
-                  <td className="border-r p-2">
-                    <input type="number" className="w-full outline-none text-right p-1 bg-transparent font-medium" value={item.price === 0 ? '' : item.price} onChange={(e) => { const newItems = [...items]; newItems[idx].price = Number(e.target.value); setItems(newItems); }} placeholder="0" />
-                  </td>
-                  <td className="border-r p-2 text-right font-bold text-gray-700">
-                    {(item.qty * item.price).toLocaleString()}원
-                  </td>
-                  <td className="p-2 text-center space-x-1 whitespace-nowrap">
-                    <button onClick={() => copyItem(idx)} className="text-purple-600 font-bold hover:bg-purple-50 px-2 py-1 rounded transition text-xs border border-purple-200 bg-white">복사</button>
-                    {items.length > 1 && <button onClick={() => removeItem(idx)} className="text-red-500 font-bold hover:bg-red-50 px-2 py-1 rounded transition text-xs border border-red-200 bg-white">삭제</button>}
-                  </td>
+          {/* 품목 입력 테이블 */}
+          <div className="overflow-x-auto mb-4 border border-gray-200 rounded-lg">
+            <table className="w-full min-w-[800px] border-collapse">
+              <thead>
+                <tr className="bg-gray-100 text-left border-b-2 border-gray-300">
+                  <th className="p-3 font-bold text-sm w-48 border-r text-gray-800">품목 불러오기</th>
+                  <th className="p-3 font-bold text-sm border-r text-blue-600">품명 (직접입력 가능)</th>
+                  <th className="p-3 font-bold text-sm w-24 border-r text-center text-gray-800">수량</th>
+                  <th className="p-3 font-bold text-sm w-32 border-r text-center text-gray-800">단가</th>
+                  <th className="p-3 font-bold text-sm w-36 border-r text-center text-gray-800">공급가액</th>
+                  <th className="p-3 font-bold text-sm w-24 text-center text-gray-800">관리</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {items.map((item, index) => (
+                  <tr key={item.id} className="border-b border-gray-200 hover:bg-gray-50 transition">
+                    <td className="p-2 border-r">
+                      <select 
+                        value={item.product_id}
+                        onChange={(e) => handleItemChange(index, 'product_id', e.target.value)}
+                        className="w-full p-2 border border-gray-300 rounded outline-none focus:border-blue-500 text-sm font-bold bg-white text-gray-700"
+                      >
+                        <option value="">직접 입력</option>
+                        {!selectedClient ? (
+                          <option value="disabled" disabled>거래처를 먼저 선택해주세요</option>
+                        ) : (
+                          filteredProducts.map(prod => (
+                            <option key={prod.id} value={prod.id}>{prod.name}</option>
+                          ))
+                        )}
+                      </select>
+                    </td>
+                    <td className="p-2 border-r">
+                      <input 
+                        type="text"
+                        value={item.name}
+                        onChange={(e) => handleItemChange(index, 'name', e.target.value)}
+                        placeholder="품명 직접 타자"
+                        className="w-full p-2 outline-none font-bold text-sm bg-transparent focus:bg-blue-50 rounded"
+                      />
+                    </td>
+                    <td className="p-2 border-r">
+                      <input 
+                        type="number"
+                        min="0"
+                        value={item.qty || ''}
+                        onChange={(e) => handleItemChange(index, 'qty', Number(e.target.value))}
+                        className="w-full p-2 outline-none font-bold text-sm text-center text-blue-700 bg-transparent focus:bg-blue-50 rounded"
+                      />
+                    </td>
+                    <td className="p-2 border-r">
+                      <input 
+                        type="number"
+                        min="0"
+                        value={item.price || ''}
+                        onChange={(e) => handleItemChange(index, 'price', Number(e.target.value))}
+                        className="w-full p-2 outline-none font-bold text-sm text-right text-gray-700 bg-transparent focus:bg-blue-50 rounded"
+                      />
+                    </td>
+                    <td className="p-2 border-r text-right font-extrabold text-gray-800 text-sm align-middle">
+                      {(item.qty * item.price).toLocaleString()}원
+                    </td>
+                    <td className="p-2 text-center align-middle space-x-1 whitespace-nowrap">
+                      <button onClick={() => copyItemRow(index)} className="text-purple-600 font-bold text-xs px-2 py-1 border border-purple-200 rounded hover:bg-purple-50 transition">복사</button>
+                      <button onClick={() => removeItemRow(item.id)} className="text-red-500 font-bold text-xs px-2 py-1 border border-red-200 rounded hover:bg-red-50 transition">삭제</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
 
-        {/* === 모바일 뷰 (견적서 폼과 100% 동일하게 복구) === */}
-        <div className="md:hidden space-y-4 mb-6">
-          <label className="block text-sm font-bold text-gray-700 mb-2">명세서 품목 내역</label>
-          {items.map((item, idx) => (
-            <div key={idx} className="bg-white border-2 border-gray-200 rounded-xl p-4 shadow-sm relative">
-              <div className="absolute top-3 right-3 flex gap-2">
-                <button onClick={() => copyItem(idx)} className="text-purple-600 bg-purple-50 px-3 py-1 rounded-full font-bold flex items-center justify-center shadow-sm border border-purple-100 text-xs">
-                  복사
-                </button>
-                {items.length > 1 && (
-                  <button onClick={() => removeItem(idx)} className="text-red-500 bg-red-50 w-7 h-7 rounded-full font-bold flex items-center justify-center shadow-sm border border-red-100 text-xs">
-                    X
-                  </button>
-                )}
-              </div>
-              
-              <div className="mb-3 pr-24">
-                <label className="text-xs font-bold text-gray-500 block mb-1">품목 불러오기 (선택)</label>
-                <select className="w-full border rounded-lg p-2.5 outline-none focus:border-blue-500 bg-gray-50 text-base" value={item.product_id} onChange={(e) => handleProductSelect(idx, e.target.value)}>
-                  <option value="">직접 입력하기 (선택 안함)</option>
-                  {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
-              </div>
-              <div className="mb-3">
-                <label className="text-xs font-bold text-blue-600 block mb-1">품명 (직접입력)</label>
-                <input type="text" className="w-full border border-blue-300 rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-blue-500 text-base font-bold placeholder-gray-300 shadow-inner" placeholder="품명을 직접 타자하세요" value={item.name} onChange={(e) => { const newItems = [...items]; newItems[idx].name = e.target.value; setItems(newItems); }} />
-              </div>
-              <div className="flex gap-3 mb-3">
-                <div className="flex-1">
-                  <label className="text-xs font-bold text-gray-500 block mb-1">수량</label>
-                  <input type="number" className="w-full border rounded-lg p-2.5 outline-none focus:border-blue-500 text-center text-base font-medium bg-gray-50" value={item.qty === 0 ? '' : item.qty} onChange={(e) => { const newItems = [...items]; newItems[idx].qty = Number(e.target.value); setItems(newItems); }} placeholder="0" />
-                </div>
-                <div className="flex-1">
-                  <label className="text-xs font-bold text-gray-500 block mb-1">단가 (원)</label>
-                  <input type="number" className="w-full border rounded-lg p-2.5 outline-none focus:border-blue-500 text-right text-base font-medium bg-gray-50" value={item.price === 0 ? '' : item.price} onChange={(e) => { const newItems = [...items]; newItems[idx].price = Number(e.target.value); setItems(newItems); }} placeholder="0" />
-                </div>
-              </div>
-              <div className="text-right border-t border-dashed border-gray-300 pt-3 mt-2">
-                <span className="text-xs text-gray-500 mr-2">공급가액</span>
-                <span className="font-bold text-blue-700 text-lg">{(item.qty * item.price).toLocaleString()}원</span>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <div className="flex flex-col md:flex-row justify-between items-center mb-8 border-b border-gray-200 pb-6 gap-4">
-          <button onClick={addItem} className="w-full md:w-auto bg-gray-800 text-white px-6 py-3 md:py-2.5 rounded-lg hover:bg-gray-700 transition font-bold shadow-md">
-            + 빈 품목 줄 추가
+          <button 
+            onClick={addItemRow} 
+            className="bg-[#1e293b] hover:bg-gray-800 text-white font-bold py-2 px-5 rounded-lg shadow transition text-sm flex items-center gap-2"
+          >
+            <span>+ 빈 품목 줄 추가</span>
           </button>
-        </div>
 
-        <div className="flex flex-col md:flex-row justify-end items-end md:items-center gap-6 bg-gray-50 p-5 md:p-6 rounded-xl border border-gray-200 shadow-sm">
-          <div className="flex flex-col md:flex-row gap-4 md:gap-8 w-full md:w-auto text-right md:text-left">
-            <div>
-              <p className="text-sm font-bold text-gray-500 mb-1">공급가액</p>
-              <p className="text-xl font-bold text-gray-800">{supplyTotal.toLocaleString()}원</p>
+          {/* 합계 박스 */}
+          <div className="mt-8 bg-gray-50 border border-gray-200 rounded-xl p-6 flex flex-col sm:flex-row justify-end items-end sm:items-center gap-6 md:gap-10">
+            <div className="text-right">
+              <p className="text-xs font-bold text-gray-500 mb-1">공급가액</p>
+              <p className="text-lg font-bold text-gray-700">{totalSupply.toLocaleString()}원</p>
             </div>
-            <div className="hidden md:block w-px bg-gray-300"></div>
-            <div>
-              <p className="text-sm font-bold text-gray-500 mb-1">부가세</p>
-              <p className="text-xl font-bold text-gray-800">{vatTotal.toLocaleString()}원</p>
+            <div className="text-right">
+              <p className="text-xs font-bold text-gray-500 mb-1">부가세</p>
+              <p className="text-lg font-bold text-gray-500">{totalVat.toLocaleString()}원</p>
+            </div>
+            <div className="w-px h-12 bg-gray-300 hidden sm:block"></div>
+            <div className="text-right">
+              <p className="text-sm font-extrabold text-blue-700 mb-1">총 합계금액</p>
+              <p className="text-3xl md:text-4xl font-extrabold text-gray-900">{grandTotal.toLocaleString()}<span className="text-xl font-bold ml-1">원</span></p>
             </div>
           </div>
-          
-          <div className="w-full md:w-auto border-t md:border-none border-gray-300 pt-4 md:pt-0 pl-0 md:pl-8 text-right">
-            <p className="text-sm font-bold text-blue-600 mb-1">총 합계금액</p>
-            <p className="text-3xl md:text-4xl font-extrabold text-black tracking-tight">{grandTotal.toLocaleString()}원</p>
-          </div>
         </div>
 
-        <div className="mt-8">
-          <button onClick={handleSave} disabled={isSaving} className={`w-full py-4 rounded-xl text-white font-extrabold transition shadow-lg text-lg ${isSaving ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 hover:-translate-y-1'}`}>
-            {isSaving ? '명세서 생성 중...' : '명세서 발행 및 저장하기'}
-          </button>
-        </div>
+        {/* 저장 버튼 */}
+        <button 
+          onClick={handleSaveInvoice} 
+          disabled={isSaving}
+          className={`w-full text-white font-extrabold py-5 rounded-xl shadow-lg text-lg transition ${
+            isSaving ? 'bg-indigo-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 hover:-translate-y-1'
+          }`}
+        >
+          {isSaving ? '저장 중...' : '명세서 발행 및 저장하기'}
+        </button>
 
       </div>
     </div>
