@@ -496,7 +496,9 @@ export default function InvoiceDetailPage() {
 
               const lineTotal = item.qty * item.price;
               const supply = item.is_vat_included ? Math.round(lineTotal / 1.1) : lineTotal;
-              const vat = lineTotal - supply;
+              
+              // === 핵심 버그 수정: 세액 0원 표기 문제 완벽 해결 ===
+              const vat = item.is_vat_included ? (lineTotal - supply) : Math.floor(lineTotal * 0.1);
               
               return (
                 <tr key={item.id || idx} className="text-center h-6">
@@ -573,13 +575,11 @@ export default function InvoiceDetailPage() {
           @keyframes fadeInUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
           .animate-fade-in-up { animation: fadeInUp 0.2s ease-out forwards; }
           
-          /* === 추가: 모바일 스크롤바 커스텀 === */
           .custom-scrollbar::-webkit-scrollbar { height: 8px; }
           .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 4px; }
         `
       }} />
 
-      {/* === 수정: 상단 버튼 모바일 자동 정렬 100% 복구 === */}
       <div className="max-w-4xl mx-auto mb-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 print:hidden bg-white p-4 shadow rounded-lg">
         <button onClick={() => router.back()} className="w-full sm:w-auto bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 transition text-sm font-bold">
           ← 목록으로 돌아가기
@@ -697,7 +697,6 @@ export default function InvoiceDetailPage() {
           </button>
         </div>
       ) : (
-        /* === 핵심 수정: 모바일 뷰 찌그러짐 완벽 방어 (가로 스크롤 허용) === */
         <div className="w-full overflow-x-auto pb-6 custom-scrollbar print:overflow-visible">
           <div className="mx-auto flex flex-col items-center print-container w-[800px] min-w-[800px] print:w-full print:min-w-0">
             <div className="w-full">

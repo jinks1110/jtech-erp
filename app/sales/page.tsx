@@ -38,11 +38,13 @@ export default function SalesPage() {
   const [quickYear, setQuickYear] = useState(new Date().getFullYear().toString());
   const [quickMonth, setQuickMonth] = useState((new Date().getMonth() + 1).toString());
   
-  // 마감 기준 상태 관리 (유지)
   const [cutoffType, setCutoffType] = useState<'endOfMonth' | '25th'>('endOfMonth');
 
   const [companyName, setCompanyName] = useState('J-TECH');
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
+
+  // === 핵심 수정 1: 충돌 방지용 초기화 완료 상태 플래그 추가 ===
+  const [isInitialized, setIsInitialized] = useState(false);
 
   const [confirmModal, setConfirmModal] = useState({
     isOpen: false, title: '', desc: '', confirmText: '확인', confirmColor: 'bg-blue-600 hover:bg-blue-700', onConfirm: async () => {}
@@ -50,10 +52,8 @@ export default function SalesPage() {
 
   const closeModal = () => setConfirmModal({ ...confirmModal, isOpen: false });
 
-  // 마감 기준(cutoffType)을 포함하여 날짜 계산 (유지)
   const applyQuickFilter = (year: string, month: string, cutoff: 'endOfMonth' | '25th') => {
     if (!year) return;
-    
     if (!month) {
       if (cutoff === 'endOfMonth') {
         setStartDate(`${year}-01-01`); 
@@ -65,7 +65,6 @@ export default function SalesPage() {
     } else {
       const y = Number(year);
       const m = Number(month);
-      
       if (cutoff === 'endOfMonth') {
         const paddedMonth = String(m).padStart(2, '0');
         const lastDay = new Date(y, m, 0).getDate();
@@ -80,14 +79,48 @@ export default function SalesPage() {
         }
         const paddedPrevMonth = String(prevMonth).padStart(2, '0');
         const paddedCurrentMonth = String(m).padStart(2, '0');
-        
         setStartDate(`${prevYear}-${paddedPrevMonth}-26`);
         setEndDate(`${year}-${paddedCurrentMonth}-25`);
       }
     }
   };
 
-  useEffect(() => { applyQuickFilter(quickYear, quickMonth, cutoffType); }, []);
+  // === 핵심 수정 2: 로직 충돌을 막기 위해 모든 초기화 과정을 하나의 useEffect로 완벽하게 통합 ===
+  useEffect(() => {
+    const saved = sessionStorage.getItem('jtech_sales_filters');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed.activeTab) setActiveTab(parsed.activeTab);
+        if (parsed.startDate) setStartDate(parsed.startDate);
+        if (parsed.endDate) setEndDate(parsed.endDate);
+        if (parsed.selectedClientId !== undefined) setSelectedClientId(parsed.selectedClientId);
+        if (parsed.filterSearchTerm !== undefined) setFilterSearchTerm(parsed.filterSearchTerm);
+        if (parsed.quickYear) setQuickYear(parsed.quickYear);
+        if (parsed.quickMonth !== undefined) setQuickMonth(parsed.quickMonth);
+        if (parsed.cutoffType) setCutoffType(parsed.cutoffType);
+        if (parsed.sortOrder) setSortOrder(parsed.sortOrder);
+      } catch (e) {
+        applyQuickFilter(quickYear, quickMonth, cutoffType);
+      }
+    } else {
+      // 저장된 값이 없으면 현재 년/월 기본값으로 필터 적용
+      applyQuickFilter(quickYear, quickMonth, cutoffType);
+    }
+    // 설정 완료 플래그 켜기
+    setIsInitialized(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // === 핵심 수정 3: 초기화가 완전히 끝난(isInitialized === true) 후에만 세션 스토리지 덮어쓰기 허용 ===
+  useEffect(() => {
+    if (isInitialized) {
+      sessionStorage.setItem('jtech_sales_filters', JSON.stringify({
+        activeTab, startDate, endDate, selectedClientId, filterSearchTerm, quickYear, quickMonth, cutoffType, sortOrder
+      }));
+    }
+  }, [isInitialized, activeTab, startDate, endDate, selectedClientId, filterSearchTerm, quickYear, quickMonth, cutoffType, sortOrder]);
+
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -149,7 +182,9 @@ export default function SalesPage() {
     }
   };
 
-  useEffect(() => { fetchData(); }, [startDate, endDate, selectedClientId, sortOrder]);
+  useEffect(() => { 
+    if (startDate) { fetchData(); }
+  }, [startDate, endDate, selectedClientId, sortOrder]);
 
   const toggleSort = () => setSortOrder(prev => prev === 'desc' ? 'asc' : 'desc');
 
@@ -213,7 +248,7 @@ export default function SalesPage() {
             invoice_id: newInvoice.id, product_id: item.product_id, name: item.name, spec: item.spec, qty: item.qty, price: item.price
           }));
           await supabase.from('invoice_items').insert(itemsToInsert);
-          router.push(`/invoice/print/${newInvoice.id}`); // 복사 후 보기 페이지로 이동 (수정)
+          router.push(`/sales/${newInvoice.id}`); 
         } catch (error: any) { alert('명세서 복사에 실패했습니다.'); }
       }
     });
@@ -281,7 +316,6 @@ export default function SalesPage() {
 
   const filteredSearchClients = clients.filter(c => c.name.toLowerCase().includes(filterSearchTerm.toLowerCase()));
 
-  // 탭 이동 및 필터 클릭 시 사용할 유틸 함수
   const handleClientClick = (clientId: string, clientName: string) => {
     setSelectedClientId(clientId);
     setFilterSearchTerm(clientName);
@@ -297,12 +331,12 @@ export default function SalesPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4 md:p-8 text-black print:bg-white print:p-0 relative">
+    <div className="min-h-screen bg-gray-50 p-2 pt-16 lg:p-4 lg:pt-8 text-black print:bg-white print:p-0 relative">
       
       {confirmModal.isOpen && (
         <div className="fixed inset-0 z-[100] flex items-start justify-center pt-20 p-4 print:hidden">
-          <div className="absolute inset-0 bg-transparent" onClick={closeModal}></div>
-          <div className="relative bg-white rounded-2xl shadow-[0_20px_60px_-15px_rgba(0,0,0,0.3)] border-2 border-gray-200 p-6 w-full max-w-sm animate-fade-in-up z-10">
+          <div className="absolute inset-0 bg-gray-900/10 backdrop-blur-[2px]" onClick={closeModal}></div>
+          <div className="relative bg-white rounded-2xl shadow-2xl border border-gray-200 p-6 w-full max-w-sm animate-fade-in-up z-10">
             <h3 className="text-xl font-extrabold text-gray-900 mb-2">{confirmModal.title}</h3>
             <p className="text-gray-600 mb-6 whitespace-pre-line text-sm leading-relaxed">{confirmModal.desc}</p>
             <div className="flex justify-end gap-3">
@@ -327,41 +361,29 @@ export default function SalesPage() {
         `
       }} />
 
-      <div className="max-w-7xl mx-auto flex flex-col lg:flex-row gap-6 print:hidden">
+      <div className="max-w-[95%] xl:max-w-[1600px] mx-auto flex flex-col lg:flex-row gap-6 print:hidden">
         
-        {/* === 왼쪽 패널: 컨트롤 박스 (메뉴, 탭, 필터, 내보내기) === */}
-        <div className="w-full lg:w-1/4 space-y-4">
-          <div className="bg-white p-5 md:p-6 shadow-lg rounded-lg border-t-4 border-blue-600 sticky top-6">
+        <div className="w-full lg:w-1/4 space-y-4 shrink-0">
+          <div className="bg-white p-5 md:p-6 shadow-lg rounded-lg border-t-4 border-blue-600 lg:sticky lg:top-6">
             <div className="mb-4 border-b pb-4">
               <h1 className="text-xl md:text-2xl font-extrabold">매출 및 명세서 조회</h1>
               <p className="text-gray-500 text-sm mt-1 font-bold">기간 및 거래처별 데이터 분석</p>
             </div>
             
-            {/* 세로형 탭 메뉴 */}
             <div className="flex flex-col gap-2 mb-6">
-              <button 
-                onClick={() => handleTabChange('summary')}
-                className={`text-left p-3 rounded-lg font-bold transition flex items-center gap-2 ${activeTab === 'summary' ? 'bg-blue-100 text-blue-800 border-l-4 border-blue-600' : 'text-gray-600 hover:bg-gray-100'}`}
-              >
+              <button onClick={() => handleTabChange('summary')} className={`text-left p-3 rounded-lg font-bold transition flex items-center gap-2 ${activeTab === 'summary' ? 'bg-blue-100 text-blue-800 border-l-4 border-blue-600' : 'text-gray-600 hover:bg-gray-100'}`}>
                 <span>🏢</span> 거래처별 집계
               </button>
-              <button 
-                onClick={() => handleTabChange('list')}
-                className={`text-left p-3 rounded-lg font-bold transition flex items-center gap-2 ${activeTab === 'list' ? 'bg-blue-100 text-blue-800 border-l-4 border-blue-600' : 'text-gray-600 hover:bg-gray-100'}`}
-              >
+              <button onClick={() => handleTabChange('list')} className={`text-left p-3 rounded-lg font-bold transition flex items-center gap-2 ${activeTab === 'list' ? 'bg-blue-100 text-blue-800 border-l-4 border-blue-600' : 'text-gray-600 hover:bg-gray-100'}`}>
                 <span>📄</span> 명세서 목록
               </button>
-              <button 
-                onClick={() => handleTabChange('items')}
-                className={`text-left p-3 rounded-lg font-bold transition flex items-center gap-2 ${activeTab === 'items' ? 'bg-blue-100 text-blue-800 border-l-4 border-blue-600' : 'text-gray-600 hover:bg-gray-100'}`}
-              >
+              <button onClick={() => handleTabChange('items')} className={`text-left p-3 rounded-lg font-bold transition flex items-center gap-2 ${activeTab === 'items' ? 'bg-blue-100 text-blue-800 border-l-4 border-blue-600' : 'text-gray-600 hover:bg-gray-100'}`}>
                 <span>📦</span> 품목별 상세 내역
               </button>
             </div>
 
             <div className="h-px bg-gray-200 my-4"></div>
 
-            {/* 필터 설정 영역 */}
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-bold text-gray-700 mb-2">마감 기준 & 년월 선택</label>
@@ -373,9 +395,10 @@ export default function SalesPage() {
                   <select value={quickYear} onChange={handleYearChange} className="flex-1 border rounded-lg p-2 text-sm outline-none focus:border-blue-500 font-bold bg-white text-gray-700">
                     {yearOptions.map(y => <option key={y} value={y}>{y}년</option>)}
                   </select>
+                  {/* === 핵심 수정 4: value에 명시적으로 .toString()을 부여하여 데이터와 UI를 완벽 동기화 === */}
                   <select value={quickMonth} onChange={handleMonthChange} className="flex-1 border rounded-lg p-2 text-sm outline-none focus:border-blue-500 font-bold bg-white text-gray-700">
                     <option value="">전체 월</option>
-                    {Array.from({length: 12}, (_, i) => i + 1).map(m => <option key={m} value={m}>{m}월</option>)}
+                    {Array.from({length: 12}, (_, i) => i + 1).map(m => <option key={m} value={m.toString()}>{m}월</option>)}
                   </select>
                 </div>
               </div>
@@ -383,11 +406,12 @@ export default function SalesPage() {
               <div className="flex gap-2">
                 <div className="w-1/2">
                   <label className="block text-xs font-bold text-gray-500 mb-1">시작일</label>
-                  <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full border rounded-lg p-2 text-xs font-bold outline-none focus:border-blue-500" />
+                  {/* === 핵심 수정 5: 날짜를 수동으로 바꿀 때도 UI가 꼬이지 않도록 quickMonth를 빈 값으로 리셋 === */}
+                  <input type="date" value={startDate} onChange={(e) => { setStartDate(e.target.value); setQuickMonth(''); }} className="w-full border rounded-lg p-2 text-xs font-bold outline-none focus:border-blue-500" />
                 </div>
                 <div className="w-1/2">
                   <label className="block text-xs font-bold text-gray-500 mb-1">종료일</label>
-                  <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-full border rounded-lg p-2 text-xs font-bold outline-none focus:border-blue-500" />
+                  <input type="date" value={endDate} onChange={(e) => { setEndDate(e.target.value); setQuickMonth(''); }} className="w-full border rounded-lg p-2 text-xs font-bold outline-none focus:border-blue-500" />
                 </div>
               </div>
 
@@ -430,7 +454,6 @@ export default function SalesPage() {
 
             <div className="h-px bg-gray-200 my-5"></div>
             
-            {/* 대표님 원본 내보내기 기능 버튼들 */}
             <div className="flex flex-col gap-2">
               <button onClick={() => window.print()} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-lg shadow flex items-center justify-center gap-2 transition text-sm">
                 <span>🖨️</span> 원장 인쇄 (A4)
@@ -445,21 +468,20 @@ export default function SalesPage() {
           </div>
         </div>
 
-        {/* === 오른쪽 패널: 집계 카드 및 리스트 뷰 === */}
-        <div className="w-full lg:w-3/4 flex flex-col gap-6">
+        <div className="w-full lg:w-3/4 flex flex-col gap-4 sm:gap-6 overflow-hidden">
           
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-white p-5 shadow-lg rounded-xl border border-gray-200 border-l-4 border-l-blue-500 flex flex-col justify-center">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+            <div className="bg-white p-4 sm:p-5 shadow-lg rounded-xl border border-gray-200 border-l-4 border-l-blue-500 flex flex-col justify-center">
               <p className="text-xs font-extrabold text-gray-500 mb-1">총 공급가액</p>
-              <p className="text-2xl font-extrabold text-gray-900">{totalSupply.toLocaleString()}원</p>
+              <p className="text-xl sm:text-2xl font-extrabold text-gray-900">{totalSupply.toLocaleString()}원</p>
             </div>
-            <div className="bg-white p-5 shadow-lg rounded-xl border border-gray-200 border-l-4 border-l-purple-500 flex flex-col justify-center">
+            <div className="bg-white p-4 sm:p-5 shadow-lg rounded-xl border border-gray-200 border-l-4 border-l-purple-500 flex flex-col justify-center">
               <p className="text-xs font-extrabold text-gray-500 mb-1">총 부가세</p>
-              <p className="text-2xl font-extrabold text-gray-900">{totalVat.toLocaleString()}원</p>
+              <p className="text-xl sm:text-2xl font-extrabold text-gray-900">{totalVat.toLocaleString()}원</p>
             </div>
-            <div className="bg-white p-5 shadow-lg rounded-xl border border-gray-200 border-l-4 border-l-green-500 flex flex-col justify-center bg-green-50/30">
+            <div className="bg-white p-4 sm:p-5 shadow-lg rounded-xl border border-gray-200 border-l-4 border-l-green-500 flex flex-col justify-center bg-green-50/30">
               <p className="text-sm font-extrabold text-green-700 mb-1">총 합계금액</p>
-              <p className="text-3xl font-extrabold text-green-700">{grandTotal.toLocaleString()}<span className="text-lg ml-1">원</span></p>
+              <p className="text-2xl sm:text-3xl font-extrabold text-green-700">{grandTotal.toLocaleString()}<span className="text-sm sm:text-lg ml-1">원</span></p>
             </div>
           </div>
 
@@ -472,118 +494,181 @@ export default function SalesPage() {
                 <p className="text-gray-500 font-bold">해당 조건에 맞는 데이터가 없습니다.</p>
               </div>
             ) : (
-              <div className="overflow-x-auto">
+              <div className="animate-fade-in-up">
+                
+                {/* 1. 거래처별 집계 탭 */}
                 {activeTab === 'summary' && (
-                  <div className="animate-fade-in-up">
-                    <p className="text-sm text-gray-500 mb-3 font-bold">* [목록 보기]를 클릭하면 해당 업체의 명세서 목록만 필터링되어 나타납니다.</p>
-                    <table className="w-full border-collapse min-w-[700px]">
-                      <thead>
-                        <tr className="bg-gray-100 text-left text-sm border-b-2 border-gray-300">
-                          <th className="p-3 w-16 text-center font-bold">No</th>
-                          <th className="p-3 font-extrabold text-blue-700">거래처명</th>
-                          <th className="p-3 w-24 text-center font-bold">발행 건수</th>
-                          <th className="p-3 w-32 text-right font-bold">공급가액</th>
-                          <th className="p-3 w-32 text-right font-bold">부가세</th>
-                          <th className="p-3 w-40 text-right font-extrabold text-green-700">총 합계</th>
-                          <th className="p-3 text-center w-28 whitespace-nowrap">관리</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {clientSummary.map((client, idx) => (
-                          <tr key={client.id} className="border-b hover:bg-blue-50 transition text-sm">
-                            <td className="p-3 text-center text-gray-400 font-bold">{idx + 1}</td>
-                            <td className="p-3 font-extrabold text-gray-900">{client.name}</td>
-                            <td className="p-3 text-center font-bold text-gray-600">{client.count}건</td>
-                            <td className="p-3 text-right font-bold text-gray-700">{client.supply.toLocaleString()}원</td>
-                            <td className="p-3 text-right font-bold text-gray-500">{client.vat.toLocaleString()}원</td>
-                            <td className="p-3 text-right font-extrabold text-blue-700 bg-blue-50/30">
-                              {client.total.toLocaleString()}원
-                            </td>
-                            <td className="p-3 text-center whitespace-nowrap">
-                              <button 
-                                onClick={() => handleClientClick(client.id, client.name)}
-                                className="bg-white text-blue-600 border border-blue-200 px-3 py-1.5 rounded text-xs font-bold hover:bg-blue-50 transition shadow-sm whitespace-nowrap"
-                              >
-                                목록 보기
-                              </button>
-                            </td>
+                  <>
+                    <div className="hidden md:block overflow-x-auto">
+                      <p className="text-sm text-gray-500 mb-3 font-bold">* [목록 보기]를 클릭하면 해당 업체의 명세서 목록만 필터링되어 나타납니다.</p>
+                      <table className="w-full border-collapse min-w-[700px]">
+                        <thead>
+                          <tr className="bg-gray-100 text-left text-sm border-b-2 border-gray-300">
+                            <th className="p-3 w-16 text-center font-bold">No</th>
+                            <th className="p-3 font-extrabold text-blue-700">거래처명</th>
+                            <th className="p-3 w-24 text-center font-bold">발행 건수</th>
+                            <th className="p-3 w-32 text-right font-bold">공급가액</th>
+                            <th className="p-3 w-32 text-right font-bold">부가세</th>
+                            <th className="p-3 w-40 text-right font-extrabold text-green-700">총 합계</th>
+                            <th className="p-3 text-center w-28 whitespace-nowrap">관리</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                        </thead>
+                        <tbody>
+                          {clientSummary.map((client, idx) => (
+                            <tr key={client.id} className="border-b hover:bg-blue-50 transition text-sm">
+                              <td className="p-3 text-center text-gray-400 font-bold">{idx + 1}</td>
+                              <td className="p-3 font-extrabold text-gray-900">{client.name}</td>
+                              <td className="p-3 text-center font-bold text-gray-600">{client.count}건</td>
+                              <td className="p-3 text-right font-bold text-gray-700">{client.supply.toLocaleString()}원</td>
+                              <td className="p-3 text-right font-bold text-gray-500">{client.vat.toLocaleString()}원</td>
+                              <td className="p-3 text-right font-extrabold text-blue-700 bg-blue-50/30">{client.total.toLocaleString()}원</td>
+                              <td className="p-3 text-center whitespace-nowrap">
+                                <button onClick={() => handleClientClick(client.id, client.name)} className="bg-white text-blue-600 border border-blue-200 px-3 py-1.5 rounded text-xs font-bold hover:bg-blue-50 transition shadow-sm whitespace-nowrap">목록 보기</button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="md:hidden space-y-4">
+                      {clientSummary.map((client, idx) => (
+                        <div key={client.id} className="bg-white border-2 border-gray-200 rounded-xl p-4 shadow-sm">
+                          <div className="flex justify-between items-center mb-3 border-b border-dashed pb-2">
+                            <span className="font-extrabold text-blue-800 text-lg">{client.name}</span>
+                            <span className="text-xs font-bold text-gray-500 bg-gray-100 px-2 py-1 rounded">{client.count}건 발행</span>
+                          </div>
+                          <div className="text-sm text-gray-600 space-y-1 mb-3">
+                            <div className="flex justify-between"><span className="font-medium">공급가액:</span><span>{client.supply.toLocaleString()}원</span></div>
+                            <div className="flex justify-between"><span className="font-medium">부가세:</span><span>{client.vat.toLocaleString()}원</span></div>
+                            <div className="flex justify-between pt-2 mt-2 border-t"><span className="font-bold">총 합계:</span><span className="font-extrabold text-blue-700">{client.total.toLocaleString()}원</span></div>
+                          </div>
+                          <button onClick={() => handleClientClick(client.id, client.name)} className="w-full bg-blue-50 text-blue-700 border border-blue-200 py-2 rounded-lg text-sm font-bold text-center">목록 보기</button>
+                        </div>
+                      ))}
+                    </div>
+                  </>
                 )}
 
+                {/* 2. 품목별 상세 내역 탭 */}
                 {activeTab === 'items' && (
-                  <div className="animate-fade-in-up">
-                    <table className="w-full border-collapse min-w-[800px]">
-                      <thead>
-                        <tr className="bg-gray-100 text-left text-sm border-b-2 border-gray-300">
-                          <th className="p-3 w-24 font-bold">작성일자</th>
-                          <th className="p-3 w-36 font-extrabold text-blue-700">거래처명</th>
-                          <th className="p-3 w-36 font-bold text-gray-500">문서번호</th>
-                          <th className="p-3 font-bold">품목명</th>
-                          <th className="p-3 w-20 text-center font-bold">수량</th>
-                          <th className="p-3 w-28 text-right font-bold">단가</th>
-                          <th className="p-3 w-32 text-right font-extrabold text-green-700">공급가액</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {detailedItems.map((item, idx) => (
-                          <tr key={idx} className="border-b hover:bg-gray-50 transition text-sm">
-                            <td className="p-3 font-bold text-gray-600 whitespace-nowrap">{new Date(item.created_at).toLocaleDateString()}</td>
-                            <td className="p-3 font-bold text-blue-800 whitespace-nowrap">{item.client_name}</td>
-                            <td className="p-3 font-medium text-gray-400 whitespace-nowrap">{item.invoice_no}</td>
-                            <td className="p-3 font-extrabold text-gray-800">{item.item_name}</td>
-                            <td className="p-3 text-center font-bold text-indigo-600">{item.qty.toLocaleString()}</td>
-                            <td className="p-3 text-right text-gray-600">{item.price.toLocaleString()}원</td>
-                            <td className="p-3 text-right font-bold text-gray-800">{(item.qty * item.price).toLocaleString()}원</td>
+                  <>
+                    <div className="hidden md:block overflow-x-auto">
+                      <table className="w-full border-collapse min-w-[800px]">
+                        <thead>
+                          <tr className="bg-gray-100 text-left text-sm border-b-2 border-gray-300">
+                            <th className="p-3 w-24 font-bold">작성일자</th>
+                            <th className="p-3 w-36 font-extrabold text-blue-700">거래처명</th>
+                            <th className="p-3 w-32 font-bold text-gray-500">문서번호</th>
+                            <th className="p-3 font-bold">품목명</th>
+                            <th className="p-3 w-16 text-center font-bold">수량</th>
+                            <th className="p-3 w-28 text-right font-bold">단가</th>
+                            <th className="p-3 w-32 text-right font-extrabold text-green-700">공급가액</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                        </thead>
+                        <tbody>
+                          {detailedItems.map((item, idx) => (
+                            <tr key={idx} className="border-b hover:bg-gray-50 transition text-sm">
+                              <td className="p-3 font-bold text-gray-600 whitespace-nowrap">{new Date(item.created_at).toLocaleDateString()}</td>
+                              <td className="p-3 font-bold text-blue-800 whitespace-nowrap">{item.client_name}</td>
+                              <td className="p-3 font-medium text-gray-400 truncate max-w-[120px]" title={item.invoice_no}>{item.invoice_no}</td>
+                              <td className="p-3 font-extrabold text-gray-800 truncate max-w-[200px] lg:max-w-[300px]" title={item.item_name}>{item.item_name}</td>
+                              <td className="p-3 text-center font-bold text-indigo-600">{item.qty.toLocaleString()}</td>
+                              <td className="p-3 text-right text-gray-600">{item.price.toLocaleString()}원</td>
+                              <td className="p-3 text-right font-bold text-gray-800">{(item.qty * item.price).toLocaleString()}원</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="md:hidden space-y-4">
+                      {detailedItems.map((item, idx) => (
+                        <div key={idx} className="bg-white border-2 border-gray-200 rounded-xl p-4 shadow-sm">
+                          <div className="flex justify-between items-center mb-2 border-b border-dashed pb-2">
+                            <span className="text-sm font-medium text-gray-500">{new Date(item.created_at).toLocaleDateString()}</span>
+                            <span className="text-xs font-bold text-gray-400 bg-gray-100 px-2 py-1 rounded truncate max-w-[120px]">{item.invoice_no}</span>
+                          </div>
+                          <div className="mb-2">
+                            <h3 className="font-extrabold text-blue-800 text-lg">{item.client_name}</h3>
+                            <p className="font-extrabold text-gray-900 mt-1">{item.item_name}</p>
+                          </div>
+                          <div className="flex justify-between items-center text-sm text-gray-600 bg-gray-50 p-2 rounded">
+                            <div className="flex items-center gap-2"><span className="font-medium text-indigo-600 border border-indigo-200 bg-white px-2 py-0.5 rounded">{item.qty}개</span><span>× {item.price.toLocaleString()}원</span></div>
+                            <span className="font-extrabold text-gray-800">{(item.qty * item.price).toLocaleString()}원</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
                 )}
 
+                {/* 3. 명세서 목록 탭 */}
                 {activeTab === 'list' && (
-                  <div className="animate-fade-in-up">
-                    <table className="w-full border-collapse min-w-[900px]">
-                      <thead>
-                        <tr className="bg-gray-100 text-left text-sm border-b-2 border-gray-200">
-                          <th className="p-3 cursor-pointer hover:bg-gray-200 transition select-none font-bold text-gray-700" onClick={toggleSort}>
-                            작성일자 {sortOrder === 'desc' ? '▼' : '▲'}
-                          </th>
-                          <th className="p-3 font-bold text-gray-700">문서번호</th>
-                          <th className="p-3 w-48 font-bold text-gray-700">품목명</th>
-                          <th className="p-3 font-extrabold text-blue-700">거래처명</th>
-                          <th className="p-3 text-right font-bold text-gray-700">공급가액</th>
-                          <th className="p-3 text-right font-bold text-gray-700">부가세</th>
-                          <th className="p-3 text-right font-extrabold text-green-700">총합계</th>
-                          <th className="p-3 text-center font-bold text-gray-700">관리</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {invoices.map((inv) => (
-                          <tr key={inv.id} className="border-b hover:bg-gray-50 transition text-sm">
-                            <td className="p-3 text-gray-600 font-bold whitespace-nowrap">{new Date(inv.created_at).toLocaleDateString()}</td>
-                            <td className="p-3 font-medium text-gray-500 whitespace-nowrap">{inv.invoice_no}</td>
-                            <td className="p-3 font-extrabold text-gray-800 truncate max-w-[200px]" title={getProductName(inv.invoice_items)}>
-                              {getProductName(inv.invoice_items)}
-                            </td>
-                            <td className="p-3 font-extrabold text-blue-800 whitespace-nowrap">{inv.clients?.name || '삭제된 거래처'}</td>
-                            <td className="p-3 text-right font-bold text-gray-700 whitespace-nowrap">{inv.supply_amount.toLocaleString()}원</td>
-                            <td className="p-3 text-right font-bold text-gray-500 whitespace-nowrap">{inv.vat_amount.toLocaleString()}원</td>
-                            <td className="p-3 text-right font-extrabold text-green-700 whitespace-nowrap">{inv.total_amount.toLocaleString()}원</td>
-                            <td className="p-3 text-center space-x-1 whitespace-nowrap">
-                              <Link href={`/sales/${inv.id}`} className="inline-block text-blue-600 hover:text-blue-800 font-bold px-2 py-1 border border-blue-200 rounded bg-white text-xs hover:bg-blue-50 transition shadow-sm">보기</Link>
-                              <button onClick={() => handleCopyInvoiceList(inv.id)} className="inline-block text-purple-600 hover:text-purple-800 font-bold px-2 py-1 border border-purple-200 rounded bg-white text-xs hover:bg-purple-50 transition shadow-sm">복사</button>
-                              <button onClick={() => handleDeleteInvoice(inv.id)} className="inline-block text-red-500 hover:text-red-700 font-bold px-2 py-1 border border-red-200 rounded bg-white text-xs hover:bg-red-50 transition shadow-sm">삭제</button>
-                            </td>
+                  <>
+                    <div className="hidden md:block overflow-x-auto">
+                      <table className="w-full border-collapse">
+                        <thead>
+                          <tr className="bg-gray-100 text-left text-sm border-b-2 border-gray-200">
+                            <th className="p-3 cursor-pointer hover:bg-gray-200 transition select-none font-bold text-gray-700 whitespace-nowrap" onClick={toggleSort}>
+                              작성일자 {sortOrder === 'desc' ? '▼' : '▲'}
+                            </th>
+                            <th className="p-3 font-bold text-gray-700 w-32">문서번호</th>
+                            <th className="p-3 font-bold text-gray-700">품목명</th>
+                            <th className="p-3 font-extrabold text-blue-700">거래처명</th>
+                            <th className="p-3 text-right font-bold text-gray-700 whitespace-nowrap">공급가액</th>
+                            <th className="p-3 text-right font-bold text-gray-700 whitespace-nowrap">부가세</th>
+                            <th className="p-3 text-right font-extrabold text-green-700 whitespace-nowrap">총합계</th>
+                            <th className="p-3 text-center font-bold text-gray-700 whitespace-nowrap">관리</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                        </thead>
+                        <tbody>
+                          {invoices.map((inv) => (
+                            <tr key={inv.id} className="border-b hover:bg-gray-50 transition text-sm">
+                              <td className="p-3 text-gray-600 font-bold whitespace-nowrap">{new Date(inv.created_at).toLocaleDateString()}</td>
+                              <td className="p-3 font-medium text-gray-500 truncate max-w-[100px] sm:max-w-[120px]" title={inv.invoice_no}>{inv.invoice_no}</td>
+                              <td className="p-3 font-extrabold text-gray-800 truncate max-w-[200px] lg:max-w-[350px]" title={getProductName(inv.invoice_items)}>{getProductName(inv.invoice_items)}</td>
+                              <td className="p-3 font-extrabold text-blue-800 whitespace-nowrap">{inv.clients?.name || '삭제된 거래처'}</td>
+                              <td className="p-3 text-right font-bold text-gray-700 whitespace-nowrap">{inv.supply_amount.toLocaleString()}원</td>
+                              <td className="p-3 text-right font-bold text-gray-500 whitespace-nowrap">{inv.vat_amount.toLocaleString()}원</td>
+                              <td className="p-3 text-right font-extrabold text-green-700 whitespace-nowrap">{inv.total_amount.toLocaleString()}원</td>
+                              <td className="p-3 text-center space-x-1 whitespace-nowrap">
+                                <Link href={`/sales/${inv.id}`} className="inline-block text-blue-600 hover:text-blue-800 font-bold px-2 py-1 border border-blue-200 rounded bg-white text-xs hover:bg-blue-50 transition shadow-sm">보기</Link>
+                                <button onClick={() => handleCopyInvoiceList(inv.id)} className="inline-block text-purple-600 hover:text-purple-800 font-bold px-2 py-1 border border-purple-200 rounded bg-white text-xs hover:bg-purple-50 transition shadow-sm">복사</button>
+                                <button onClick={() => handleDeleteInvoice(inv.id)} className="inline-block text-red-500 hover:text-red-700 font-bold px-2 py-1 border border-red-200 rounded bg-white text-xs hover:bg-red-50 transition shadow-sm">삭제</button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="md:hidden space-y-4">
+                      {invoices.map((inv) => (
+                        <div key={inv.id} className="bg-white border-2 border-gray-200 rounded-xl p-4 shadow-sm relative">
+                          <div className="flex justify-between items-center mb-3 border-b border-dashed pb-2">
+                            <span className="text-sm font-medium text-gray-500">{new Date(inv.created_at).toLocaleDateString()}</span>
+                            <span className="text-xs font-bold text-gray-400 bg-gray-100 px-2 py-1 rounded truncate max-w-[120px]">{inv.invoice_no}</span>
+                          </div>
+                          <div className="mb-4">
+                            <h3 className="font-extrabold text-xl text-blue-800">{inv.clients?.name || '삭제된 거래처'}</h3>
+                            <p className="text-sm font-medium text-gray-600 mt-1 truncate">품목: {getProductName(inv.invoice_items)}</p>
+                          </div>
+                          <div className="flex justify-between items-end">
+                            <div className="text-sm text-gray-600 space-y-1">
+                              <p><span className="inline-block w-12 font-medium">공급가:</span> {inv.supply_amount.toLocaleString()}원</p>
+                              <p><span className="inline-block w-12 font-medium">부가세:</span> {inv.vat_amount.toLocaleString()}원</p>
+                            </div>
+                            <div className="text-right flex flex-col items-end">
+                              <p className="font-extrabold text-xl text-green-700 mb-2">{inv.total_amount.toLocaleString()}원</p>
+                              <div className="flex gap-2 mt-2">
+                                <button onClick={() => handleDeleteInvoice(inv.id)} className="bg-red-50 text-red-600 border border-red-200 px-3 py-2 rounded-lg text-sm font-bold transition hover:bg-red-100">삭제</button>
+                                <button onClick={() => handleCopyInvoiceList(inv.id)} className="bg-purple-50 text-purple-700 border border-purple-200 px-3 py-2 rounded-lg text-sm font-bold transition hover:bg-purple-100">복사</button>
+                                <Link href={`/sales/${inv.id}`} className="bg-blue-50 text-blue-700 border border-blue-200 px-3 py-2 rounded-lg text-sm font-bold text-center transition hover:bg-blue-100">보기</Link>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
                 )}
               </div>
             )}
@@ -591,18 +676,12 @@ export default function SalesPage() {
         </div>
       </div>
 
-      {/* === 대표님이 심혈을 기울여 짜놓으신 완벽한 인쇄 화면 (유지) === */}
       <div className="hidden print:block w-full max-w-none text-black print-table-wrapper">
         <h1 className="text-3xl font-extrabold text-center mb-6 tracking-widest underline underline-offset-8 decoration-2">매 출 원 장</h1>
         
         <div className="flex justify-between items-end mb-4 font-bold text-sm">
-          <div>
-            <p className="mb-1">조회 기간 : {startDate} ~ {endDate}</p>
-            <p>조회 대상 : <span className="text-blue-800">{getFilteredClientName()}</span></p>
-          </div>
-          <div className="text-right">
-            <p>공급자 : {companyName}</p>
-          </div>
+          <div><p className="mb-1">조회 기간 : {startDate} ~ {endDate}</p><p>조회 대상 : <span className="text-blue-800">{getFilteredClientName()}</span></p></div>
+          <div className="text-right"><p>공급자 : {companyName}</p></div>
         </div>
 
         <table className="w-full border-collapse border border-black text-xs mb-2">

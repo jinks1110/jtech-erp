@@ -1,6 +1,6 @@
 "use client";
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
@@ -8,8 +8,15 @@ import { supabase } from '@/lib/supabase';
 export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
+  
+  // === 신규: 모바일 메뉴 열림/닫힘 상태 관리 ===
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  // 로그인 및 비밀번호 재설정 페이지에서는 사이드바를 숨깁니다.
+  // 페이지 이동 시 모바일 메뉴 자동 닫기
+  useEffect(() => {
+    setIsMobileMenuOpen(false);
+  }, [pathname]);
+
   if (pathname === '/login' || pathname === '/update-password') return null;
 
   const handleLogout = async () => {
@@ -18,7 +25,6 @@ export default function Sidebar() {
     router.push('/login');
   };
 
-  // === 수정: 맨 위에 '홈' 버튼 추가 ===
   const menus = [
     { name: '홈 (대시보드)', path: '/', icon: '🏠' },
     { name: '명세서 작성', path: '/invoice', icon: '✍️' },
@@ -29,55 +35,88 @@ export default function Sidebar() {
     { name: '매입 조회', path: '/purchase', icon: '📥' },
     { name: '거래처 관리', path: '/clients', icon: '🏢' },
     { name: '품목/단가 관리', path: '/products', icon: '📦' },
+    { name: '공용 자료실', path: '/shared-files', icon: '📂' },
   ];
 
   return (
-    <aside className="w-64 bg-[#0f172a] text-white flex flex-col h-screen sticky top-0 shrink-0 shadow-2xl z-50 print:hidden">
-      
-      {/* 로고 영역 (클릭 시 홈으로 이동 기능 유지) */}
-      <Link 
-        href="/" 
-        className="p-6 border-b border-gray-800 flex flex-col items-center justify-center cursor-pointer hover:bg-gray-800 transition"
+    <>
+      {/* === 신규: 모바일용 햄버거 버튼 (화면 좌측 상단에 고정) === */}
+      <button
+        onClick={() => setIsMobileMenuOpen(true)}
+        className="lg:hidden fixed top-3 left-3 z-[60] p-2 bg-[#0f172a] text-white rounded-lg shadow-md print:hidden focus:outline-none"
       >
-        <h1 className="text-2xl font-extrabold tracking-widest text-blue-400">
-          J-TECH <span className="text-white">ERP</span>
-        </h1>
-        <p className="text-xs text-gray-400 mt-2 font-medium">통합 관리 시스템</p>
-      </Link>
-      
-      <nav className="flex-1 overflow-y-auto py-6 px-4 space-y-2">
-        {menus.map((menu) => {
-          // === 핵심 로직: 홈('/') 경로일 때는 정확히 일치할 때만 활성화 ===
-          // 다른 메뉴들은 해당 경로로 시작하면 활성화 처리
-          const isActive = menu.path === '/' 
-            ? pathname === '/' 
-            : pathname === menu.path || pathname.startsWith(`${menu.path}/`);
-          
-          return (
-            <Link 
-              key={menu.path} 
-              href={menu.path} 
-              className={`flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${
-                isActive 
-                  ? 'bg-blue-600 text-white shadow-md' 
-                  : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
-              }`}
-            >
-              <span className="text-lg">{menu.icon}</span>
-              {menu.name}
-            </Link>
-          );
-        })}
-      </nav>
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16"></path>
+        </svg>
+      </button>
 
-      <div className="p-4 border-t border-gray-800">
+      {/* === 신규: 모바일 메뉴 열렸을 때 뒷배경 어둡게 처리 === */}
+      {isMobileMenuOpen && (
+        <div 
+          className="lg:hidden fixed inset-0 bg-black/60 z-[70]"
+          onClick={() => setIsMobileMenuOpen(false)}
+        ></div>
+      )}
+
+      {/* === 수정: PC에서는 고정(sticky), 모바일에서는 숨김/슬라이드(fixed)로 동작하는 반응형 클래스 적용 === */}
+      <aside className={`
+        fixed lg:sticky top-0 left-0 h-screen w-64 bg-[#0f172a] text-white flex flex-col shrink-0 shadow-2xl z-[80] print:hidden transition-transform duration-300 ease-in-out
+        ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
+      `}>
+        
+        {/* 모바일 닫기 버튼 */}
         <button 
-          onClick={handleLogout} 
-          className="w-full flex items-center justify-center gap-2 bg-gray-800 hover:bg-gray-700 hover:text-red-400 text-gray-300 px-4 py-3 rounded-xl font-bold transition"
+          onClick={() => setIsMobileMenuOpen(false)} 
+          className="lg:hidden absolute top-4 right-4 p-2 text-gray-400 hover:text-white"
         >
-          <span>🔒</span> 로그아웃
+          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
         </button>
-      </div>
-    </aside>
+
+        {/* 로고 영역 */}
+        <Link 
+          href="/" 
+          className="p-6 border-b border-gray-800 flex flex-col items-center justify-center cursor-pointer hover:bg-gray-800 transition"
+        >
+          <h1 className="text-2xl font-extrabold tracking-widest text-blue-400">
+            J-TECH <span className="text-white">ERP</span>
+          </h1>
+          <p className="text-xs text-gray-400 mt-2 font-medium">통합 관리 시스템</p>
+        </Link>
+        
+        <nav className="flex-1 overflow-y-auto py-6 px-4 space-y-2 custom-scrollbar">
+          {menus.map((menu) => {
+            const isActive = menu.path === '/' 
+              ? pathname === '/' 
+              : pathname === menu.path || pathname.startsWith(`${menu.path}/`);
+            
+            return (
+              <Link 
+                key={menu.path} 
+                href={menu.path} 
+                className={`flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${
+                  isActive 
+                    ? 'bg-blue-600 text-white shadow-md' 
+                    : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
+                }`}
+              >
+                <span className="text-lg">{menu.icon}</span>
+                {menu.name}
+              </Link>
+            );
+          })}
+        </nav>
+
+        <div className="p-4 border-t border-gray-800 shrink-0">
+          <button 
+            onClick={handleLogout} 
+            className="w-full flex items-center justify-center gap-2 bg-gray-800 hover:bg-gray-700 hover:text-red-400 text-gray-300 px-4 py-3 rounded-xl font-bold transition"
+          >
+            <span>🔒</span> 로그아웃
+          </button>
+        </div>
+      </aside>
+    </>
   );
 }
