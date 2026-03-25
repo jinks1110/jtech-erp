@@ -9,10 +9,8 @@ export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   
-  // === 신규: 모바일 메뉴 열림/닫힘 상태 관리 ===
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  // 페이지 이동 시 모바일 메뉴 자동 닫기
   useEffect(() => {
     setIsMobileMenuOpen(false);
   }, [pathname]);
@@ -40,7 +38,6 @@ export default function Sidebar() {
 
   return (
     <>
-      {/* === 신규: 모바일용 햄버거 버튼 (화면 좌측 상단에 고정) === */}
       <button
         onClick={() => setIsMobileMenuOpen(true)}
         className="lg:hidden fixed top-3 left-3 z-[60] p-2 bg-[#0f172a] text-white rounded-lg shadow-md print:hidden focus:outline-none"
@@ -50,7 +47,6 @@ export default function Sidebar() {
         </svg>
       </button>
 
-      {/* === 신규: 모바일 메뉴 열렸을 때 뒷배경 어둡게 처리 === */}
       {isMobileMenuOpen && (
         <div 
           className="lg:hidden fixed inset-0 bg-black/60 z-[70]"
@@ -58,13 +54,11 @@ export default function Sidebar() {
         ></div>
       )}
 
-      {/* === 수정: PC에서는 고정(sticky), 모바일에서는 숨김/슬라이드(fixed)로 동작하는 반응형 클래스 적용 === */}
       <aside className={`
         fixed lg:sticky top-0 left-0 h-screen w-64 bg-[#0f172a] text-white flex flex-col shrink-0 shadow-2xl z-[80] print:hidden transition-transform duration-300 ease-in-out
         ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
       `}>
         
-        {/* 모바일 닫기 버튼 */}
         <button 
           onClick={() => setIsMobileMenuOpen(false)} 
           className="lg:hidden absolute top-4 right-4 p-2 text-gray-400 hover:text-white"
@@ -74,7 +68,6 @@ export default function Sidebar() {
           </svg>
         </button>
 
-        {/* 로고 영역 */}
         <Link 
           href="/" 
           className="p-6 border-b border-gray-800 flex flex-col items-center justify-center cursor-pointer hover:bg-gray-800 transition"
@@ -87,9 +80,12 @@ export default function Sidebar() {
         
         <nav className="flex-1 overflow-y-auto py-6 px-4 space-y-2 custom-scrollbar">
           {menus.map((menu) => {
+            // === 핵심 수정: 매입 메뉴 주소 충돌 완벽 방어 ===
             const isActive = menu.path === '/' 
               ? pathname === '/' 
-              : pathname === menu.path || pathname.startsWith(`${menu.path}/`);
+              : menu.path === '/purchase'
+                ? (pathname === '/purchase' || (pathname.startsWith('/purchase/') && pathname !== '/purchase/new'))
+                : pathname === menu.path || pathname.startsWith(`${menu.path}/`);
             
             return (
               <Link 

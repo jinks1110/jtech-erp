@@ -43,7 +43,6 @@ export default function SalesPage() {
   const [companyName, setCompanyName] = useState('J-TECH');
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
 
-  // === 핵심 수정 1: 충돌 방지용 초기화 완료 상태 플래그 추가 ===
   const [isInitialized, setIsInitialized] = useState(false);
 
   const [confirmModal, setConfirmModal] = useState({
@@ -54,6 +53,7 @@ export default function SalesPage() {
 
   const applyQuickFilter = (year: string, month: string, cutoff: 'endOfMonth' | '25th') => {
     if (!year) return;
+    
     if (!month) {
       if (cutoff === 'endOfMonth') {
         setStartDate(`${year}-01-01`); 
@@ -65,6 +65,7 @@ export default function SalesPage() {
     } else {
       const y = Number(year);
       const m = Number(month);
+      
       if (cutoff === 'endOfMonth') {
         const paddedMonth = String(m).padStart(2, '0');
         const lastDay = new Date(y, m, 0).getDate();
@@ -79,13 +80,13 @@ export default function SalesPage() {
         }
         const paddedPrevMonth = String(prevMonth).padStart(2, '0');
         const paddedCurrentMonth = String(m).padStart(2, '0');
+        
         setStartDate(`${prevYear}-${paddedPrevMonth}-26`);
         setEndDate(`${year}-${paddedCurrentMonth}-25`);
       }
     }
   };
 
-  // === 핵심 수정 2: 로직 충돌을 막기 위해 모든 초기화 과정을 하나의 useEffect로 완벽하게 통합 ===
   useEffect(() => {
     const saved = sessionStorage.getItem('jtech_sales_filters');
     if (saved) {
@@ -104,15 +105,12 @@ export default function SalesPage() {
         applyQuickFilter(quickYear, quickMonth, cutoffType);
       }
     } else {
-      // 저장된 값이 없으면 현재 년/월 기본값으로 필터 적용
       applyQuickFilter(quickYear, quickMonth, cutoffType);
     }
-    // 설정 완료 플래그 켜기
     setIsInitialized(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // === 핵심 수정 3: 초기화가 완전히 끝난(isInitialized === true) 후에만 세션 스토리지 덮어쓰기 허용 ===
   useEffect(() => {
     if (isInitialized) {
       sessionStorage.setItem('jtech_sales_filters', JSON.stringify({
@@ -183,7 +181,9 @@ export default function SalesPage() {
   };
 
   useEffect(() => { 
-    if (startDate) { fetchData(); }
+    if (startDate) {
+      fetchData(); 
+    }
   }, [startDate, endDate, selectedClientId, sortOrder]);
 
   const toggleSort = () => setSortOrder(prev => prev === 'desc' ? 'asc' : 'desc');
@@ -395,7 +395,6 @@ export default function SalesPage() {
                   <select value={quickYear} onChange={handleYearChange} className="flex-1 border rounded-lg p-2 text-sm outline-none focus:border-blue-500 font-bold bg-white text-gray-700">
                     {yearOptions.map(y => <option key={y} value={y}>{y}년</option>)}
                   </select>
-                  {/* === 핵심 수정 4: value에 명시적으로 .toString()을 부여하여 데이터와 UI를 완벽 동기화 === */}
                   <select value={quickMonth} onChange={handleMonthChange} className="flex-1 border rounded-lg p-2 text-sm outline-none focus:border-blue-500 font-bold bg-white text-gray-700">
                     <option value="">전체 월</option>
                     {Array.from({length: 12}, (_, i) => i + 1).map(m => <option key={m} value={m.toString()}>{m}월</option>)}
@@ -406,7 +405,6 @@ export default function SalesPage() {
               <div className="flex gap-2">
                 <div className="w-1/2">
                   <label className="block text-xs font-bold text-gray-500 mb-1">시작일</label>
-                  {/* === 핵심 수정 5: 날짜를 수동으로 바꿀 때도 UI가 꼬이지 않도록 quickMonth를 빈 값으로 리셋 === */}
                   <input type="date" value={startDate} onChange={(e) => { setStartDate(e.target.value); setQuickMonth(''); }} className="w-full border rounded-lg p-2 text-xs font-bold outline-none focus:border-blue-500" />
                 </div>
                 <div className="w-1/2">
@@ -530,6 +528,7 @@ export default function SalesPage() {
                         </tbody>
                       </table>
                     </div>
+                    {/* === 모바일 카드 뷰 (집계) === */}
                     <div className="md:hidden space-y-4">
                       {clientSummary.map((client, idx) => (
                         <div key={client.id} className="bg-white border-2 border-gray-200 rounded-xl p-4 shadow-sm">
@@ -563,6 +562,8 @@ export default function SalesPage() {
                             <th className="p-3 w-16 text-center font-bold">수량</th>
                             <th className="p-3 w-28 text-right font-bold">단가</th>
                             <th className="p-3 w-32 text-right font-extrabold text-green-700">공급가액</th>
+                            {/* === 핵심 추가: 관리 탭 (명세서 보기) === */}
+                            <th className="p-3 w-24 text-center font-bold text-gray-800">관리</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -575,11 +576,18 @@ export default function SalesPage() {
                               <td className="p-3 text-center font-bold text-indigo-600">{item.qty.toLocaleString()}</td>
                               <td className="p-3 text-right text-gray-600">{item.price.toLocaleString()}원</td>
                               <td className="p-3 text-right font-bold text-gray-800">{(item.qty * item.price).toLocaleString()}원</td>
+                              {/* === 핵심 추가: 명세서 보기 버튼 === */}
+                              <td className="p-3 text-center whitespace-nowrap">
+                                <Link href={`/sales/${item.invoice_id}`} className="text-blue-600 font-bold px-2 py-1 border border-blue-200 rounded bg-white text-xs hover:bg-blue-50 shadow-sm transition">
+                                  명세서 보기
+                                </Link>
+                              </td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
                     </div>
+                    {/* === 모바일 카드 뷰 (품목 상세) === */}
                     <div className="md:hidden space-y-4">
                       {detailedItems.map((item, idx) => (
                         <div key={idx} className="bg-white border-2 border-gray-200 rounded-xl p-4 shadow-sm">
@@ -594,6 +602,12 @@ export default function SalesPage() {
                           <div className="flex justify-between items-center text-sm text-gray-600 bg-gray-50 p-2 rounded">
                             <div className="flex items-center gap-2"><span className="font-medium text-indigo-600 border border-indigo-200 bg-white px-2 py-0.5 rounded">{item.qty}개</span><span>× {item.price.toLocaleString()}원</span></div>
                             <span className="font-extrabold text-gray-800">{(item.qty * item.price).toLocaleString()}원</span>
+                          </div>
+                          {/* === 핵심 추가: 모바일 명세서 보기 버튼 === */}
+                          <div className="mt-3 pt-3 border-t border-gray-100 flex justify-end">
+                            <Link href={`/sales/${item.invoice_id}`} className="bg-blue-50 text-blue-700 border border-blue-200 px-3 py-1.5 rounded-lg text-xs font-bold transition hover:bg-blue-100">
+                              명세서 보기
+                            </Link>
                           </div>
                         </div>
                       ))}
@@ -640,6 +654,7 @@ export default function SalesPage() {
                         </tbody>
                       </table>
                     </div>
+                    {/* === 모바일 카드 뷰 (목록) - 기존 완벽 유지 === */}
                     <div className="md:hidden space-y-4">
                       {invoices.map((inv) => (
                         <div key={inv.id} className="bg-white border-2 border-gray-200 rounded-xl p-4 shadow-sm relative">
