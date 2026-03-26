@@ -229,10 +229,10 @@ export default function QuotationListPage() {
                   <table className="w-full border-collapse">
                     <thead>
                       <tr className="bg-gray-100 text-left text-sm border-b-2 border-gray-200">
-                        <th className="p-3 font-bold text-gray-700 whitespace-nowrap">작성일자</th>
                         <th className="p-3 font-bold text-gray-700 w-32">견적서 번호</th>
-                        <th className="p-3 font-bold text-gray-700">품목명</th>
+                        <th className="p-3 font-bold text-gray-700 whitespace-nowrap">작성일자</th>
                         <th className="p-3 font-extrabold text-yellow-700">거래처명</th>
+                        <th className="p-3 font-bold text-gray-700">품목명</th>
                         <th className="p-3 text-right font-extrabold text-yellow-700 whitespace-nowrap">총 견적금액</th>
                         <th className="p-3 text-center font-bold text-gray-700 whitespace-nowrap">관리</th>
                       </tr>
@@ -240,10 +240,10 @@ export default function QuotationListPage() {
                     <tbody>
                       {quotations.map((q) => (
                         <tr key={q.id} className="border-b hover:bg-gray-50 transition text-sm">
-                          <td className="p-3 text-gray-600 font-bold whitespace-nowrap">{new Date(q.created_at).toLocaleDateString()}</td>
                           <td className="p-3 font-medium text-gray-500 truncate max-w-[100px] sm:max-w-[120px]">{q.quotation_no}</td>
-                          <td className="p-3 font-extrabold text-gray-800 truncate max-w-[200px] lg:max-w-[350px]" title={getProductName(q.quotation_items)}>{getProductName(q.quotation_items)}</td>
+                          <td className="p-3 text-gray-600 font-bold whitespace-nowrap">{new Date(q.created_at).toLocaleDateString()}</td>
                           <td className="p-3 font-extrabold text-yellow-800 whitespace-nowrap">{q.clients?.name || '삭제된 거래처'}</td>
+                          <td className="p-3 font-extrabold text-gray-800 truncate max-w-[200px] lg:max-w-[350px]" title={getProductName(q.quotation_items)}>{getProductName(q.quotation_items)}</td>                          
                           <td className="p-3 text-right font-extrabold text-yellow-700 whitespace-nowrap">{q.total_amount.toLocaleString()}원</td>
                           <td className="p-3 text-center space-x-1 whitespace-nowrap">
                             <Link href={`/quotation/${q.id}`} className="inline-block text-blue-600 font-bold px-2 py-1 border border-blue-200 rounded bg-white text-xs hover:bg-blue-50 transition shadow-sm">보기</Link>

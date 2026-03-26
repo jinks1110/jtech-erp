@@ -348,18 +348,25 @@ export default function PurchaseListPage() {
                       <table className="w-full border-collapse">
                         <thead>
                           <tr className="bg-gray-100 text-left text-sm border-b-2 border-gray-200">
+                            <th className="p-3 font-bold text-gray-700 w-32">전표번호</th>
                             <th className="p-3 cursor-pointer hover:bg-gray-200 transition select-none font-bold text-gray-700 whitespace-nowrap" onClick={toggleSort}>등록일자 {sortOrder === 'desc' ? '▼' : '▲'}</th>
-                            <th className="p-3 font-bold text-gray-700 w-32">전표번호</th><th className="p-3 font-bold text-gray-700">품목명</th><th className="p-3 font-extrabold text-green-700">매입처명</th>
-                            <th className="p-3 text-right font-bold text-gray-700 whitespace-nowrap">공급가액</th><th className="p-3 text-right font-bold text-gray-700 whitespace-nowrap">부가세</th>
-                            <th className="p-3 text-right font-extrabold text-green-700 whitespace-nowrap">총합계</th><th className="p-3 text-center font-bold text-gray-700 whitespace-nowrap">관리</th>
+                            <th className="p-3 font-extrabold text-green-700">매입처명</th>
+                            <th className="p-3 font-bold text-gray-700">품목명</th>                            
+                            <th className="p-3 text-right font-bold text-gray-700 whitespace-nowrap">공급가액</th>
+                            <th className="p-3 text-right font-bold text-gray-700 whitespace-nowrap">부가세</th>
+                            <th className="p-3 text-right font-extrabold text-green-700 whitespace-nowrap">총합계</th>
+                            <th className="p-3 text-center font-bold text-gray-700 whitespace-nowrap">관리</th>
                           </tr>
                         </thead>
                         <tbody>
                           {purchases.map((p) => (
                             <tr key={p.id} className="border-b hover:bg-gray-50 transition text-sm">
-                              <td className="p-3 text-gray-600 font-bold whitespace-nowrap">{new Date(p.created_at).toLocaleDateString()}</td><td className="p-3 font-medium text-gray-500 truncate max-w-[100px]">{p.purchase_no}</td>
-                              <td className="p-3 font-extrabold text-gray-800 truncate max-w-[200px]" title={getProductName(p.purchase_items)}>{getProductName(p.purchase_items)}</td><td className="p-3 font-extrabold text-green-800 whitespace-nowrap">{p.clients?.name || '삭제된 매입처'}</td>
-                              <td className="p-3 text-right font-bold text-gray-700 whitespace-nowrap">{p.supply_amount.toLocaleString()}원</td><td className="p-3 text-right font-bold text-gray-500 whitespace-nowrap">{p.vat_amount.toLocaleString()}원</td>
+                              <td className="p-3 font-medium text-gray-500 truncate max-w-[100px]">{p.purchase_no}</td>
+                              <td className="p-3 text-gray-600 font-bold whitespace-nowrap">{new Date(p.created_at).toLocaleDateString()}</td>
+                              <td className="p-3 font-extrabold text-green-800 whitespace-nowrap">{p.clients?.name || '삭제된 매입처'}</td>
+                              <td className="p-3 font-extrabold text-gray-800 truncate max-w-[200px]" title={getProductName(p.purchase_items)}>{getProductName(p.purchase_items)}</td>                              
+                              <td className="p-3 text-right font-bold text-gray-700 whitespace-nowrap">{p.supply_amount.toLocaleString()}원</td>
+                              <td className="p-3 text-right font-bold text-gray-500 whitespace-nowrap">{p.vat_amount.toLocaleString()}원</td>
                               <td className="p-3 text-right font-extrabold text-green-700 whitespace-nowrap">{p.total_amount.toLocaleString()}원</td>
                               <td className="p-3 text-center whitespace-nowrap">
                                 <Link href={`/purchase/${p.id}`} className="inline-block text-blue-600 font-bold px-3 py-1.5 border border-blue-200 rounded bg-white text-xs hover:bg-blue-50 transition shadow-sm mr-1">보기</Link>

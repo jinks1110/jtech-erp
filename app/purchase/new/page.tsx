@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 
-interface Client { id: string; name: string; }
+interface Client { id: string; name: string; business_number?: string; ceo_name?: string; }
 interface Product { id: string; name: string; spec: string; price: number; client_id: string; }
 interface PurchaseItem { id: string; product_id: string; name: string; spec: string; qty: number; price: number; }
 
@@ -16,11 +16,7 @@ export default function PurchaseCreatePage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
 
-  const [clientSearchTerm, setClientSearchTerm] = useState('');
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
-  const [showClientDropdown, setShowClientDropdown] = useState(false);
-  const searchRef = useRef<HTMLDivElement>(null);
-  const [highlightedIndex, setHighlightedIndex] = useState(-1);
 
   const getTodayKST = () => {
     const offset = new Date().getTimezoneOffset() * 60000;
@@ -38,6 +34,9 @@ export default function PurchaseCreatePage() {
   const closeAlert = () => setAlertModal(prev => ({ ...prev, isOpen: false }));
   const showAlert = (title: string, desc: string, onConfirm = closeAlert) => setAlertModal({ isOpen: true, title, desc, confirmText: '확인', confirmColor: 'bg-green-600 hover:bg-green-700', onConfirm });
 
+  const [isClientModalOpen, setIsClientModalOpen] = useState(false);
+  const [modalSearchTerm, setModalSearchTerm] = useState('');
+
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -47,7 +46,7 @@ export default function PurchaseCreatePage() {
         const { data: profile } = await supabase.from('profiles').select('company_id').eq('id', session.user.id).single();
         if (!profile) return;
 
-        const { data: clientData } = await supabase.from('clients').select('id, name').eq('company_id', profile.company_id).eq('is_active', true).order('name');
+        const { data: clientData } = await supabase.from('clients').select('id, name, business_number, ceo_name').eq('company_id', profile.company_id).eq('is_active', true).order('name');
         if (clientData) setClients(clientData);
 
         const { data: productData } = await supabase.from('products').select('id, name, spec, price, client_id').eq('company_id', profile.company_id).eq('is_active', true);
@@ -61,24 +60,9 @@ export default function PurchaseCreatePage() {
     fetchData();
   }, [router]);
 
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => { if (searchRef.current && !searchRef.current.contains(event.target as Node)) setShowClientDropdown(false); };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  const filteredClients = clients.filter(c => c.name.toLowerCase().includes(clientSearchTerm.toLowerCase()));
-  const filteredProducts = selectedClient ? products.filter(p => p.client_id === selectedClient.id) : []; 
-
-  const handleClientSelect = (client: Client) => { setSelectedClient(client); setClientSearchTerm(client.name); setShowClientDropdown(false); setHighlightedIndex(-1); };
-  const handleClientSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => { setClientSearchTerm(e.target.value); setShowClientDropdown(true); setHighlightedIndex(-1); if (e.target.value !== selectedClient?.name) setSelectedClient(null); };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (!showClientDropdown || filteredClients.length === 0) return;
-    if (e.key === 'ArrowDown') { e.preventDefault(); setHighlightedIndex(prev => (prev < filteredClients.length - 1 ? prev + 1 : prev)); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); setHighlightedIndex(prev => (prev > 0 ? prev - 1 : 0)); }
-    else if (e.key === 'Enter') { e.preventDefault(); if (highlightedIndex >= 0 && highlightedIndex < filteredClients.length) handleClientSelect(filteredClients[highlightedIndex]); }
-    else if (e.key === 'Escape') { setShowClientDropdown(false); setHighlightedIndex(-1); }
+  const handleClientSelect = (client: Client) => { 
+    setSelectedClient(client); 
+    setIsClientModalOpen(false); 
   };
 
   const addItemRow = () => setItems([...items, { id: Date.now().toString(), product_id: '', name: '', spec: '', qty: 0, price: 0 }]);
@@ -104,7 +88,7 @@ export default function PurchaseCreatePage() {
   const grandTotal = totalSupply + totalVat;
 
   const handleSavePurchase = async () => {
-    if (!selectedClient) return showAlert('확인 필요', '매입처(거래처)를 검색하여 선택해주세요.');
+    if (!selectedClient) return showAlert('확인 필요', '매입처(거래처)를 선택해주세요.');
     const validItems = items.filter(item => item.name.trim() !== '' && item.qty > 0);
     if (validItems.length === 0) return showAlert('확인 필요', '최소 1개 이상의 유효한 매입 품목을 입력해주세요.');
 
@@ -147,6 +131,7 @@ export default function PurchaseCreatePage() {
   return (
     <div className="w-full overflow-x-hidden min-h-screen bg-gray-50 p-2 pt-16 lg:p-4 lg:pt-8 text-black relative">
       
+      {/* 알림 모달 */}
       {alertModal.isOpen && (
         <div className="fixed inset-0 z-[100] flex items-start justify-center pt-20 p-4">
           <div className="absolute inset-0 bg-gray-900/10 backdrop-blur-[2px]" onClick={closeAlert}></div>
@@ -158,45 +143,106 @@ export default function PurchaseCreatePage() {
         </div>
       )}
 
+      {/* === 절대 무시 못하는 강제 인라인 스타일 모달 === */}
+      {isClientModalOpen && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-gray-900/60 backdrop-blur-sm" onClick={() => setIsClientModalOpen(false)}></div>
+          
+          {/* 강제 높이 지정 (style 적용) */}
+          <div 
+            className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl flex flex-col z-10 border-2 border-green-600 overflow-hidden animate-fade-in-up"
+            style={{ height: '70vh', maxHeight: '700px' }} // 브라우저가 무조건 높이를 화면의 70%로 자름
+          >
+            {/* 고정 헤더 */}
+            <div className="p-4 border-b flex justify-between items-center bg-gray-50 shrink-0">
+               <h3 className="text-lg font-extrabold text-green-900 flex items-center gap-2"><span>🏢</span> 매입처 선택</h3>
+               <button onClick={() => setIsClientModalOpen(false)} className="text-gray-400 hover:text-red-500 font-bold text-3xl leading-none">&times;</button>
+            </div>
+            
+            {/* 고정 검색창 */}
+            <div className="p-4 border-b shrink-0 bg-white">
+               <div className="relative">
+                 <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400">🔍</span>
+                 <input 
+                   type="text" 
+                   placeholder="상호명을 검색하세요..." 
+                   className="w-full pl-10 pr-4 py-2.5 border-2 border-green-200 rounded-lg outline-none focus:border-green-600 font-bold text-gray-800 text-sm" 
+                   value={modalSearchTerm} 
+                   onChange={e => setModalSearchTerm(e.target.value)} 
+                   autoFocus 
+                 />
+               </div>
+            </div>
+            
+            {/* 강제 스크롤 영역 (style 적용) */}
+            <div 
+              className="flex-1 p-4 bg-gray-50 custom-scrollbar"
+              style={{ overflowY: 'auto', minHeight: 0 }} // 브라우저가 무조건 세로 스크롤을 만들게 강제함
+            >
+               <div className="flex flex-col gap-2">
+                 {clients.filter(c => c.name.toLowerCase().includes(modalSearchTerm.toLowerCase())).map(client => (
+                   <button 
+                     key={client.id} 
+                     onClick={() => handleClientSelect(client)} 
+                     className="text-left p-3 border border-gray-200 rounded-lg bg-white hover:bg-green-50 hover:border-green-400 transition shadow-sm group flex justify-between items-center"
+                   >
+                     <div>
+                       <div className="font-extrabold text-gray-900 group-hover:text-green-800 text-base mb-1">{client.name}</div>
+                       <div className="text-xs text-gray-500 font-medium">
+                         사업자: {client.business_number || '-'} | 대표: {client.ceo_name || '-'}
+                       </div>
+                     </div>
+                     <span className="shrink-0 bg-gray-100 text-gray-500 group-hover:bg-green-600 group-hover:text-white px-3 py-1.5 rounded-md text-xs font-bold transition">선택</span>
+                   </button>
+                 ))}
+                 {clients.filter(c => c.name.toLowerCase().includes(modalSearchTerm.toLowerCase())).length === 0 && (
+                   <div className="text-center py-10 text-gray-400 font-bold border-2 border-dashed border-gray-200 rounded-lg">
+                     검색된 거래처가 없습니다.
+                   </div>
+                 )}
+               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <style dangerouslySetInnerHTML={{ __html: `
         @keyframes fadeInUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } } 
         .animate-fade-in-up { animation: fadeInUp 0.2s ease-out forwards; }
-        .custom-scrollbar::-webkit-scrollbar { height: 8px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 4px; }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 8px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 10px; }
       ` }} />
 
       <div className="max-w-[95%] xl:max-w-[1600px] mx-auto flex flex-col lg:flex-row gap-6">
         
-        {/* 좌측 패널 */}
         <div className="w-full lg:w-1/4 space-y-4 shrink-0">
-          {/* === 핵심 수정: 컬러를 전부 green 계열로 통일하여 보장 === */}
           <div className="bg-white p-5 md:p-6 shadow-lg rounded-xl border-t-4 border-green-600 lg:sticky lg:top-6">
             <div className="mb-6 border-b pb-4">
               <h1 className="text-xl md:text-2xl font-extrabold">매입 내역 작성</h1>
               <p className="text-gray-500 text-sm mt-1 font-bold">신규 지출/매입 등록</p>
             </div>
 
-            <div className="relative" ref={searchRef}>
-              <label className="block text-sm font-bold text-gray-700 mb-2">1. 매입처(거래처) 검색</label>
-              <div className="relative">
-                <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400 font-bold">🔍</span>
-                <input type="text" value={clientSearchTerm} onChange={handleClientSearchChange} onClick={() => setShowClientDropdown(true)} onKeyDown={handleKeyDown} className="w-full pl-10 pr-4 py-3 rounded-lg border-2 border-green-200 focus:border-green-500 outline-none font-bold text-gray-800 bg-white" placeholder="예: 영일전자" />
-              </div>
-              {showClientDropdown && filteredClients.length > 0 && (
-                <ul className="absolute z-20 w-full left-0 mt-1 bg-white border-2 border-green-200 rounded-lg shadow-xl max-h-60 overflow-y-auto">
-                  {filteredClients.map((client, index) => (
-                    <li key={client.id} className={`px-4 py-3 cursor-pointer font-extrabold text-green-900 border-b border-gray-100 last:border-b-0 ${highlightedIndex === index ? 'bg-green-100' : 'hover:bg-green-50'}`} onClick={() => handleClientSelect(client)} onMouseEnter={() => setHighlightedIndex(index)}>{client.name}</li>
-                  ))}
-                </ul>
+            <div>
+              <label className="block text-sm font-bold text-gray-700 mb-2">1. 매입처(거래처) 선택</label>
+              {!selectedClient ? (
+                <button 
+                  onClick={() => setIsClientModalOpen(true)} 
+                  className="w-full bg-green-50 hover:bg-green-100 text-green-700 border border-green-300 border-dashed py-4 rounded-xl font-extrabold flex items-center justify-center gap-2 transition shadow-sm hover:shadow"
+                >
+                  <span className="text-xl">🔍</span> 거래처 검색 및 선택하기
+                </button>
+              ) : (
+                <div className="bg-green-50 border-2 border-green-400 p-4 rounded-xl flex justify-between items-center shadow-sm">
+                  <div>
+                    <p className="text-xs font-bold text-gray-500 mb-1">선택된 매입처</p>
+                    <div className="flex items-center gap-2"><span className="text-xl">🏢</span><span className="text-lg font-extrabold text-green-900">{selectedClient.name}</span></div>
+                  </div>
+                  <button onClick={() => setIsClientModalOpen(true)} className="bg-white border border-green-200 text-green-700 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-green-100 shadow-sm transition">변경</button>
+                </div>
               )}
             </div>
 
-            <div className={`mt-3 mb-6 p-4 rounded-lg border-2 transition-all ${selectedClient ? 'bg-green-50 border-green-400' : 'bg-gray-50 border-dashed border-gray-300'}`}>
-              <p className="text-xs font-bold text-gray-500 mb-1">선택된 매입처</p>
-              {selectedClient ? (<div className="flex items-center gap-2"><span className="text-xl">🏢</span><span className="text-lg font-extrabold text-green-800">{selectedClient.name}</span></div>) : (<p className="text-sm font-bold text-gray-400">매입처를 먼저 선택해주세요.</p>)}
-            </div>
-
-            <div className="h-px bg-gray-200 my-4"></div>
+            <div className="h-px bg-gray-200 my-6"></div>
 
             <div>
               <div className="flex justify-between items-end mb-2">
@@ -225,9 +271,7 @@ export default function PurchaseCreatePage() {
           </div>
         </div>
 
-        {/* 우측 패널 */}
         <div className="w-full lg:w-3/4 flex flex-col gap-4 sm:gap-6 min-w-0">
-          
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
             <div className="bg-white p-4 sm:p-5 shadow-lg rounded-xl border border-gray-200 border-l-4 border-l-green-500 flex flex-col justify-center"><p className="text-xs font-extrabold text-gray-500 mb-1">매입 공급가액</p><p className="text-xl sm:text-2xl font-extrabold text-gray-900">{totalSupply.toLocaleString()}원</p></div>
             <div className="bg-white p-4 sm:p-5 shadow-lg rounded-xl border border-gray-200 border-l-4 border-l-blue-500 flex flex-col justify-center"><p className="text-xs font-extrabold text-gray-500 mb-1">매입 부가세</p><p className="text-xl sm:text-2xl font-extrabold text-gray-900">{totalVat.toLocaleString()}원</p></div>
@@ -258,7 +302,7 @@ export default function PurchaseCreatePage() {
                 <tbody>
                   {items.map((item, index) => (
                     <tr key={item.id} className="border-b border-gray-200 hover:bg-gray-50 transition">
-                      <td className="p-2 border-r"><select value={item.product_id} onChange={(e) => handleItemChange(index, 'product_id', e.target.value)} className="w-full p-2 border border-gray-300 rounded outline-none focus:border-green-500 font-bold bg-white text-gray-700"><option value="">직접 입력</option>{!selectedClient ? (<option value="disabled" disabled>선택 불가</option>) : (filteredProducts.map(prod => (<option key={prod.id} value={prod.id}>{prod.name}</option>)))}</select></td>
+                      <td className="p-2 border-r"><select value={item.product_id} onChange={(e) => handleItemChange(index, 'product_id', e.target.value)} className="w-full p-2 border border-gray-300 rounded outline-none focus:border-green-500 font-bold bg-white text-gray-700"><option value="">직접 입력</option>{!selectedClient ? (<option value="disabled" disabled>선택 불가</option>) : (products.filter(p => p.client_id === selectedClient.id).map(prod => (<option key={prod.id} value={prod.id}>{prod.name}</option>)))}</select></td>
                       <td className="p-2 border-r"><input type="text" value={item.name} onChange={(e) => handleItemChange(index, 'name', e.target.value)} placeholder="품명 직접 타자" className="w-full p-2 outline-none font-bold bg-transparent focus:bg-green-50 rounded" /></td>
                       <td className="p-2 border-r"><input type="text" value={item.spec || ''} onChange={(e) => handleItemChange(index, 'spec', e.target.value)} placeholder="규격" className="w-full p-2 outline-none font-bold text-center text-gray-700 bg-transparent focus:bg-green-50 rounded" /></td>
                       <td className="p-2 border-r"><input type="number" min="0" value={item.qty === 0 ? '' : item.qty} onChange={(e) => handleItemChange(index, 'qty', Number(e.target.value))} className="w-full p-2 outline-none font-bold text-center text-blue-700 bg-transparent focus:bg-green-50 rounded" /></td>
@@ -282,7 +326,7 @@ export default function PurchaseCreatePage() {
                     </div>
                   </div>
                   <div className="space-y-3">
-                    <div><label className="block text-xs font-bold text-gray-600 mb-1">품목 불러오기</label><select value={item.product_id} onChange={(e) => handleItemChange(index, 'product_id', e.target.value)} className="w-full p-2 border border-gray-300 rounded-lg outline-none focus:border-green-500 text-sm font-bold bg-white text-gray-700"><option value="">직접 입력</option>{!selectedClient ? (<option value="disabled" disabled>거래처를 먼저 선택해주세요</option>) : (filteredProducts.map(prod => (<option key={prod.id} value={prod.id}>{prod.name}</option>)))}</select></div>
+                    <div><label className="block text-xs font-bold text-gray-600 mb-1">품목 불러오기</label><select value={item.product_id} onChange={(e) => handleItemChange(index, 'product_id', e.target.value)} className="w-full p-2 border border-gray-300 rounded-lg outline-none focus:border-green-500 text-sm font-bold bg-white text-gray-700"><option value="">직접 입력</option>{!selectedClient ? (<option value="disabled" disabled>거래처를 먼저 선택해주세요</option>) : (products.filter(p => p.client_id === selectedClient.id).map(prod => (<option key={prod.id} value={prod.id}>{prod.name}</option>)))}</select></div>
                     <div><label className="block text-xs font-bold text-gray-600 mb-1">매입 품명</label><input type="text" value={item.name} onChange={(e) => handleItemChange(index, 'name', e.target.value)} placeholder="품명 입력" className="w-full p-2 border border-gray-300 outline-none font-bold text-sm bg-white rounded-lg focus:border-green-500" /></div>
                     <div className="flex gap-2">
                       <div className="w-1/2"><label className="block text-xs font-bold text-gray-600 mb-1">규격</label><input type="text" value={item.spec || ''} onChange={(e) => handleItemChange(index, 'spec', e.target.value)} placeholder="규격 입력" className="w-full p-2 border border-gray-300 outline-none font-bold text-sm bg-white rounded-lg focus:border-green-500" /></div>
