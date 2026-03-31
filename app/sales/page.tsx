@@ -43,11 +43,8 @@ export default function SalesPage() {
   const [companyName, setCompanyName] = useState('J-TECH');
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
 
-  const [isInitialized, setIsInitialized] = useState(false);
-
-  // === 신규: 페이지네이션(페이징) 상태 관리 ===
   const [currentPage, setCurrentPage] = useState(1);
-  const ITEMS_PER_PAGE = 10; // 한 페이지당 보여줄 개수
+  const ITEMS_PER_PAGE = 10;
 
   const [confirmModal, setConfirmModal] = useState({
     isOpen: false, title: '', desc: '', confirmText: '확인', confirmColor: 'bg-blue-600 hover:bg-blue-700', onConfirm: async () => {}
@@ -74,33 +71,20 @@ export default function SalesPage() {
     }
   };
 
+  // === 핵심 픽스 1: 페이지 재입장 시 무조건 초기화 및 오늘 날짜(현재 월) 세팅 ===
   useEffect(() => {
-    const saved = sessionStorage.getItem('jtech_sales_filters');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (parsed.activeTab) setActiveTab(parsed.activeTab);
-        if (parsed.startDate) setStartDate(parsed.startDate);
-        if (parsed.endDate) setEndDate(parsed.endDate);
-        if (parsed.selectedClientId !== undefined) setSelectedClientId(parsed.selectedClientId);
-        if (parsed.filterSearchTerm !== undefined) setFilterSearchTerm(parsed.filterSearchTerm);
-        if (parsed.quickYear) setQuickYear(parsed.quickYear);
-        if (parsed.quickMonth !== undefined) setQuickMonth(parsed.quickMonth);
-        if (parsed.cutoffType) setCutoffType(parsed.cutoffType);
-        if (parsed.sortOrder) setSortOrder(parsed.sortOrder);
-      } catch (e) { applyQuickFilter(quickYear, quickMonth, cutoffType); }
-    } else { applyQuickFilter(quickYear, quickMonth, cutoffType); }
-    setIsInitialized(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const y = new Date().getFullYear().toString();
+    const m = (new Date().getMonth() + 1).toString();
+    setQuickYear(y);
+    setQuickMonth(m);
+    setCutoffType('endOfMonth');
+    applyQuickFilter(y, m, 'endOfMonth');
+    setFilterSearchTerm('');
+    setSelectedClientId('');
+    setActiveTab('list');
+    setCurrentPage(1);
+    // (기존의 sessionStorage 로직은 완전히 삭제하여 잔여 기록이 남지 않도록 함)
   }, []);
-
-  useEffect(() => {
-    if (isInitialized) {
-      sessionStorage.setItem('jtech_sales_filters', JSON.stringify({
-        activeTab, startDate, endDate, selectedClientId, filterSearchTerm, quickYear, quickMonth, cutoffType, sortOrder
-      }));
-    }
-  }, [isInitialized, activeTab, startDate, endDate, selectedClientId, filterSearchTerm, quickYear, quickMonth, cutoffType, sortOrder]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -129,17 +113,17 @@ export default function SalesPage() {
       const { data: clientsData } = await supabase.from('clients').select('id, name').eq('company_id', profile.company_id).eq('is_active', true).order('name', { ascending: true });
       if (clientsData) setClients(clientsData);
 
+      // === 핵심 픽스 2: 내부 ID(client_id) 필터링 삭제 (이름 기반 프론트엔드 필터링으로 전환) ===
       let query = supabase.from('invoices').select(`id, invoice_no, created_at, supply_amount, vat_amount, total_amount, client_id, clients ( name ), invoice_items ( name, qty, price )`).eq('company_id', profile.company_id).order('created_at', { ascending: sortOrder === 'asc' });
 
       if (startDate) query = query.gte('created_at', `${startDate}T00:00:00Z`);
       if (endDate) query = query.lte('created_at', `${endDate}T23:59:59Z`);
-      if (selectedClientId) query = query.eq('client_id', selectedClientId);
 
       const { data: invoicesData, error } = await query;
       if (error) throw error;
       
       setInvoices(invoicesData as unknown as Invoice[]);
-      setCurrentPage(1); // 데이터를 새로 불러오면 항상 1페이지로 리셋
+      setCurrentPage(1); 
 
     } catch (error: any) {
       console.error('불러오기 에러:', error.message);
@@ -148,7 +132,7 @@ export default function SalesPage() {
     }
   };
 
-  useEffect(() => { if (startDate) fetchData(); }, [startDate, endDate, selectedClientId, sortOrder]);
+  useEffect(() => { if (startDate) fetchData(); }, [startDate, endDate, sortOrder]);
 
   const toggleSort = () => setSortOrder(prev => prev === 'desc' ? 'asc' : 'desc');
 
@@ -160,9 +144,19 @@ export default function SalesPage() {
 
   const getFullItemsDetails = (items: { name: string, qty: number }[]) => { return items?.map(item => `${item.name}(${item.qty})`).join(', ') || '품목 없음'; };
 
+  // === 핵심 픽스 3: 텍스트 기반 강력한 필터링 생성 ===
+  const processedInvoices = useMemo(() => {
+    if (!filterSearchTerm) return invoices;
+    const term = filterSearchTerm.toLowerCase();
+    return invoices.filter(inv => {
+      const cName = inv.clients?.name || '삭제된 거래처';
+      return cName.toLowerCase().includes(term); // 과거 데이터든 새 데이터든 이름만 같으면 무조건 검색됨
+    });
+  }, [invoices, filterSearchTerm]);
+
   const exportToExcel = () => {
-    if (invoices.length === 0) return alert('다운로드할 데이터가 없습니다.');
-    const excelData = invoices.map((inv, index) => ({
+    if (processedInvoices.length === 0) return alert('다운로드할 데이터가 없습니다.');
+    const excelData = processedInvoices.map((inv, index) => ({
       'No': index + 1, '문서번호': inv.invoice_no, '작성일자': new Date(inv.created_at).toLocaleDateString(),
       '거래처명': inv.clients?.name || '알 수 없음', '품목요약': getProductName(inv.invoice_items),
       '공급가액': inv.supply_amount, '부가세': inv.vat_amount, '총합계': inv.total_amount,
@@ -174,8 +168,8 @@ export default function SalesPage() {
   };
 
   const exportLedgerToExcel = () => {
-    if (invoices.length === 0) return alert('다운로드할 데이터가 없습니다.');
-    const ledgerData = invoices.map((inv) => ({
+    if (processedInvoices.length === 0) return alert('다운로드할 데이터가 없습니다.');
+    const ledgerData = processedInvoices.map((inv) => ({
       '일자': new Date(inv.created_at).toLocaleDateString(), '거래처명': inv.clients?.name || '알 수 없음',
       '품목 상세내역 (전체)': getFullItemsDetails(inv.invoice_items), '공급가액': inv.supply_amount,
       '세액(VAT)': inv.vat_amount, '합계금액': inv.total_amount, '비고': ''
@@ -231,19 +225,20 @@ export default function SalesPage() {
     });
   };
 
+  // 모든 계산 로직을 processedInvoices (필터링된 결과) 기반으로 변경
   const clientSummary = useMemo(() => {
     const summary: Record<string, { id: string, name: string, supply: number, vat: number, total: number, count: number }> = {};
-    invoices.forEach(inv => {
+    processedInvoices.forEach(inv => {
       const cName = inv.clients?.name || '삭제된 거래처';
       if (!summary[cName]) summary[cName] = { id: inv.client_id, name: cName, supply: 0, vat: 0, total: 0, count: 0 };
       summary[cName].supply += inv.supply_amount; summary[cName].vat += inv.vat_amount; summary[cName].total += inv.total_amount; summary[cName].count += 1;
     });
     return Object.values(summary).sort((a, b) => b.total - a.total);
-  }, [invoices]);
+  }, [processedInvoices]);
 
   const detailedItems = useMemo(() => {
     const itemsList: any[] = [];
-    invoices.forEach(inv => {
+    processedInvoices.forEach(inv => {
       inv.invoice_items.forEach(item => {
         itemsList.push({
           invoice_id: inv.id, created_at: inv.created_at, invoice_no: inv.invoice_no,
@@ -252,18 +247,17 @@ export default function SalesPage() {
       });
     });
     return itemsList;
-  }, [invoices]);
+  }, [processedInvoices]);
 
-  const totalSupply = invoices.reduce((sum, inv) => sum + (inv.supply_amount || 0), 0);
-  const totalVat = invoices.reduce((sum, inv) => sum + (inv.vat_amount || 0), 0);
-  const grandTotal = invoices.reduce((sum, inv) => sum + (inv.total_amount || 0), 0);
+  const totalSupply = processedInvoices.reduce((sum, inv) => sum + (inv.supply_amount || 0), 0);
+  const totalVat = processedInvoices.reduce((sum, inv) => sum + (inv.vat_amount || 0), 0);
+  const grandTotal = processedInvoices.reduce((sum, inv) => sum + (inv.total_amount || 0), 0);
   const currentYearNum = new Date().getFullYear();
   const yearOptions = Array.from({length: 5}, (_, i) => currentYearNum - 2 + i); 
 
   const getFilteredClientName = () => {
-    if (!selectedClientId) return '전체 거래처';
-    const client = clients.find(c => c.id === selectedClientId);
-    return client ? client.name : '전체 거래처';
+    if (!filterSearchTerm) return '전체 거래처';
+    return filterSearchTerm;
   };
 
   const filteredSearchClients = clients.filter(c => c.name.toLowerCase().includes(filterSearchTerm.toLowerCase()));
@@ -274,12 +268,12 @@ export default function SalesPage() {
 
   const handleTabChange = (tab: 'list' | 'summary' | 'items') => {
     if (tab === 'summary' || tab === 'items') { setSelectedClientId(''); setFilterSearchTerm(''); }
-    setActiveTab(tab); setCurrentPage(1); // 탭 변경 시 1페이지로 이동
+    setActiveTab(tab); setCurrentPage(1);
   };
 
-  // === 페이징 처리 계산 ===
-  const totalPagesList = Math.ceil(invoices.length / ITEMS_PER_PAGE) || 1;
-  const currentInvoices = invoices.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
+  // 페이징 처리 계산
+  const totalPagesList = Math.ceil(processedInvoices.length / ITEMS_PER_PAGE) || 1;
+  const currentInvoices = processedInvoices.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
 
   const totalPagesItems = Math.ceil(detailedItems.length / ITEMS_PER_PAGE) || 1;
   const currentDetailedItems = detailedItems.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
@@ -343,9 +337,18 @@ export default function SalesPage() {
                 <div className="w-1/2"><label className="block text-xs font-bold text-gray-500 mb-1">종료일</label><input type="date" value={endDate} onChange={(e) => { setEndDate(e.target.value); setQuickMonth(''); setCurrentPage(1); }} className="w-full border rounded-lg p-2 text-xs font-bold outline-none focus:border-blue-500" /></div>
               </div>
 
+              {/* === 검색 초기화 버튼 UI 구성 === */}
               <div className="relative" ref={filterWrapperRef}>
                 <label className="block text-sm font-bold text-gray-700 mb-1">거래처 필터</label>
-                <input type="text" className="w-full border-2 border-blue-200 rounded-lg p-2.5 outline-none focus:border-blue-500 bg-white placeholder-gray-400 font-bold" placeholder="전체 거래처 (클릭하여 검색)" value={filterSearchTerm} onChange={(e) => { setFilterSearchTerm(e.target.value); setShowFilterDropdown(true); if (e.target.value === '') setSelectedClientId(''); }} onClick={() => setShowFilterDropdown(true)} />
+                <div className="flex gap-2">
+                  <div className="relative flex-grow">
+                    <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400 font-bold">🔍</span>
+                    <input type="text" className="w-full pl-10 pr-4 py-2.5 border-2 border-blue-200 rounded-lg outline-none focus:border-blue-500 bg-white placeholder-gray-400 font-bold" placeholder="거래처명 (클릭하여 검색)" value={filterSearchTerm} onChange={(e) => { setFilterSearchTerm(e.target.value); setShowFilterDropdown(true); if (e.target.value === '') setSelectedClientId(''); }} onClick={() => setShowFilterDropdown(true)} />
+                  </div>
+                  <button onClick={() => { setFilterSearchTerm(''); setSelectedClientId(''); setCurrentPage(1); }} className="shrink-0 bg-gray-200 hover:bg-gray-300 text-gray-700 font-bold py-2.5 px-4 rounded-lg transition whitespace-nowrap">
+                    초기화
+                  </button>
+                </div>
                 {showFilterDropdown && filteredSearchClients.length > 0 && (
                   <ul className="absolute z-20 w-full mt-1 bg-white border-2 border-blue-200 rounded-lg shadow-xl max-h-60 overflow-y-auto">
                     <li className="px-4 py-3 hover:bg-blue-50 cursor-pointer font-bold border-b text-gray-600 flex items-center justify-between" onClick={() => { setFilterSearchTerm(''); setSelectedClientId(''); setShowFilterDropdown(false); setCurrentPage(1); }}><span>전체 보기 (초기화)</span><span>↺</span></li>
@@ -378,7 +381,7 @@ export default function SalesPage() {
           <div className="bg-white p-4 md:p-6 shadow-lg rounded-xl flex-grow min-h-[500px] flex flex-col">
             {loading ? (
               <div className="h-full flex-grow flex items-center justify-center"><p className="font-bold text-gray-500">데이터를 불러오는 중입니다...</p></div>
-            ) : invoices.length === 0 ? (
+            ) : processedInvoices.length === 0 ? (
               <div className="h-full flex-grow flex flex-col items-center justify-center bg-gray-50 rounded-lg border-2 border-dashed border-gray-300 p-10 mt-4"><span className="text-4xl mb-3 opacity-50">📭</span><p className="text-gray-500 font-bold">해당 조건에 맞는 데이터가 없습니다.</p></div>
             ) : (
               <div className="animate-fade-in-up flex flex-col h-full">
@@ -426,7 +429,6 @@ export default function SalesPage() {
                       <table className="w-full border-collapse min-w-[800px]">
                         <thead>
                           <tr className="bg-gray-100 text-left text-sm border-b-2 border-gray-300">
-                            {/* === 열 순서 변경: 문서번호 -> 작성일자 -> 거래처명 -> 품목명 === */}
                             <th className="p-3 w-32 font-bold text-gray-500">문서번호</th>
                             <th className="p-3 w-24 font-bold text-gray-700">작성일자</th>
                             <th className="p-3 w-36 font-extrabold text-blue-700">거래처명</th>
@@ -457,7 +459,7 @@ export default function SalesPage() {
                         </tbody>
                       </table>
                     </div>
-                    {/* === 모바일 뷰 === */}
+                    {/* 모바일 뷰 */}
                     <div className="md:hidden space-y-4 flex-grow mb-4">
                       {currentDetailedItems.map((item, idx) => (
                         <div key={idx} className="bg-white border-2 border-gray-200 rounded-xl p-4 shadow-sm">
@@ -503,7 +505,6 @@ export default function SalesPage() {
                       <table className="w-full border-collapse">
                         <thead>
                           <tr className="bg-gray-100 text-left text-sm border-b-2 border-gray-200">
-                            {/* === 열 순서 변경: 문서번호 -> 작성일자 -> 거래처명 -> 품목명 === */}
                             <th className="p-3 font-bold text-gray-700 w-32">문서번호</th>
                             <th className="p-3 cursor-pointer hover:bg-gray-200 transition select-none font-bold text-gray-700 whitespace-nowrap" onClick={toggleSort}>
                               작성일자 {sortOrder === 'desc' ? '▼' : '▲'}
@@ -536,7 +537,7 @@ export default function SalesPage() {
                         </tbody>
                       </table>
                     </div>
-                    {/* === 모바일 카드 뷰 === */}
+                    {/* 모바일 카드 뷰 */}
                     <div className="md:hidden space-y-4 flex-grow mb-4">
                       {currentInvoices.map((inv) => (
                         <div key={inv.id} className="bg-white border-2 border-gray-200 rounded-xl p-4 shadow-sm relative">
@@ -605,7 +606,7 @@ export default function SalesPage() {
             </tr>
           </thead>
           <tbody>
-            {invoices.map((inv) => (
+            {processedInvoices.map((inv) => (
               <tr key={inv.id}>
                 <td className="border border-black p-2 text-center align-middle">{new Date(inv.created_at).toLocaleDateString().slice(2)}</td>
                 <td className="border border-black p-2 text-center font-bold">{inv.clients?.name || '-'}</td>

@@ -33,7 +33,7 @@ interface InvoiceDetail {
 
 interface InvoiceItem {
   id?: string;
-  product_id?: string;
+  product_id?: string | null;
   name: string;
   spec: string;
   qty: number;
@@ -74,16 +74,27 @@ export default function InvoiceDetailPage() {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [isUploading, setIsUploading] = useState(false);
 
-  const [confirmModal, setConfirmModal] = useState({
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    desc: string;
+    confirmText: string;
+    confirmColor: string;
+    onConfirm: () => void;
+  }>({
     isOpen: false,
     title: '',
     desc: '',
     confirmText: '확인',
     confirmColor: 'bg-blue-600 hover:bg-blue-700',
-    onConfirm: async () => {}
+    onConfirm: () => {}
   });
 
-  const closeModal = () => setConfirmModal({ ...confirmModal, isOpen: false });
+  const closeModal = () => setConfirmModal(prev => ({ ...prev, isOpen: false }));
+
+  const showAlert = (title: string, desc: string, confirmColor = 'bg-blue-600 hover:bg-blue-700', onConfirmCallback = closeModal) => {
+    setConfirmModal({ isOpen: true, title, desc, confirmColor, confirmText: '확인', onConfirm: onConfirmCallback });
+  };
 
   const fetchInvoiceDetail = async () => {
     try {
@@ -122,7 +133,9 @@ export default function InvoiceDetailPage() {
         .order('created_at', { ascending: true });
 
       if (itemsError) throw itemsError;
-      setItems(itemsData || []);
+      
+      const formattedItems = itemsData.map((item: any) => ({ ...item, spec: item.spec || '' }));
+      setItems(formattedItems);
 
       const { data: productsData } = await supabase
         .from('products')
@@ -155,7 +168,41 @@ export default function InvoiceDetailPage() {
     if (invoiceId) {
       fetchInvoiceDetail();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invoiceId]);
+
+  const saveAsProduct = async (item: InvoiceItem) => {
+    if (!invoice) return;
+    if (!item.name.trim()) return showAlert('알림', '품명이 비어있어 저장할 수 없습니다.', 'bg-red-500 hover:bg-red-600');
+
+    const isConfirmed = window.confirm(`'${item.name}' 품목을 [${invoice.clients?.name}] 거래처의 '자주 쓰는 품목'으로 저장하시겠습니까?`);
+    if (!isConfirmed) return;
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const { data: profile } = await supabase.from('profiles').select('company_id').eq('id', session?.user.id).single();
+
+      const { error } = await supabase.from('products').insert([{
+        company_id: profile!.company_id,
+        client_id: invoice.client_id,
+        name: item.name,
+        spec: item.spec || '',
+        price: item.price || 0,
+        is_vat_included: false,
+        is_active: true
+      }]);
+
+      if (error) throw error;
+      
+      const { data: productsData } = await supabase.from('products').select('*').eq('company_id', profile!.company_id).eq('is_active', true).order('name', { ascending: true });
+      if (productsData) setProducts(productsData);
+
+      showAlert('저장 완료', `'${item.name}' 품목이 성공적으로 저장되었습니다!\n이제 드롭다운에서 바로 불러올 수 있습니다.`, 'bg-green-600 hover:bg-green-700');
+    } catch (error) {
+      console.error(error);
+      showAlert('오류', '품목 저장 중 오류가 발생했습니다.', 'bg-red-600 hover:bg-red-700');
+    }
+  };
 
   const handlePrint = () => {
     if (typeof window !== 'undefined') {
@@ -236,7 +283,7 @@ export default function InvoiceDetailPage() {
 
   const startEditing = () => {
     setIsEditing(true);
-    setEditItems([...items]); 
+    setEditItems(items.map(item => ({ ...item }))); 
     
     const d = new Date(invoice!.created_at);
     const yyyy = d.getFullYear();
@@ -269,6 +316,23 @@ export default function InvoiceDetailPage() {
         is_vat_included: selectedProduct.is_vat_included
       };
     }
+    setEditItems(newItems);
+  };
+
+  const handleEditItemChange = (index: number, field: keyof InvoiceItem, value: any) => {
+    const newItems = [...editItems];
+    
+    if (field === 'spec') {
+      const specValue = value as string;
+      newItems[index].spec = specValue;
+      const match = specValue.match(/[xX*]\s*(\d+)\s*$/);
+      if (match && match[1]) {
+        newItems[index].qty = parseInt(match[1], 10);
+      }
+    } else {
+      newItems[index] = { ...newItems[index], [field]: value };
+    }
+    
     setEditItems(newItems);
   };
 
@@ -321,9 +385,11 @@ export default function InvoiceDetailPage() {
       const { error: insertError } = await supabase.from('invoice_items').insert(itemsToInsert);
       if (insertError) throw insertError;
 
-      alert('명세서가 성공적으로 수정되었습니다.');
-      setIsEditing(false);
-      fetchInvoiceDetail(); 
+      showAlert('수정 완료', '명세서가 성공적으로 수정되었습니다.', 'bg-blue-600 hover:bg-blue-700', () => {
+        setIsEditing(false);
+        fetchInvoiceDetail();
+        closeModal();
+      });
 
     } catch (error: any) {
       alert('수정에 실패했습니다.');
@@ -496,8 +562,6 @@ export default function InvoiceDetailPage() {
 
               const lineTotal = item.qty * item.price;
               const supply = item.is_vat_included ? Math.round(lineTotal / 1.1) : lineTotal;
-              
-              // === 핵심 버그 수정: 세액 0원 표기 문제 완벽 해결 ===
               const vat = item.is_vat_included ? (lineTotal - supply) : Math.floor(lineTotal * 0.1);
               
               return (
@@ -580,10 +644,19 @@ export default function InvoiceDetailPage() {
         `
       }} />
 
+      {/* === 수정된 버튼 영역: 흰 바탕에 회색 테두리, 검정 글씨로 절대 투명해지지 않는 완벽한 버튼 === */}
       <div className="max-w-4xl mx-auto mb-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 print:hidden bg-white p-4 shadow rounded-lg">
-        <button onClick={() => router.back()} className="w-full sm:w-auto bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 transition text-sm font-bold">
-          ← 목록으로 돌아가기
-        </button>
+        
+        <div className="flex gap-2 w-full sm:w-auto">
+          <button onClick={() => router.push('/sales')} className="flex-1 sm:flex-none bg-gray-800 text-white px-4 py-2 rounded hover:bg-gray-900 transition text-sm font-bold shadow-sm">
+            📋 매출 목록
+          </button>
+          {/* 이전 화면 버튼: 뼈대 완전히 교체 */}
+          <button onClick={() => router.back()} className="flex-1 sm:flex-none bg-white border-2 border-gray-300 text-gray-800 px-4 py-2 rounded hover:bg-gray-100 transition text-sm font-extrabold shadow-sm flex items-center justify-center gap-1">
+            <span>↩</span> 이전 화면
+          </button>
+        </div>
+
         <div className="flex flex-wrap gap-2 w-full sm:w-auto justify-end">
           {!isEditing ? (
             <>
@@ -614,7 +687,7 @@ export default function InvoiceDetailPage() {
       </div>
 
       {isEditing ? (
-        <div className="max-w-4xl mx-auto bg-white p-4 md:p-8 shadow-lg border-2 border-yellow-400 rounded-lg">
+        <div className="max-w-[95%] xl:max-w-6xl mx-auto bg-white p-4 md:p-8 shadow-lg border-2 border-yellow-400 rounded-lg">
           <h2 className="text-xl md:text-2xl font-bold mb-4 text-yellow-600 border-b pb-2">명세서 내용 수정</h2>
           
           <div className="mb-4 md:mb-6 bg-yellow-50 p-4 rounded-lg border border-yellow-200">
@@ -628,23 +701,24 @@ export default function InvoiceDetailPage() {
             <p className="text-xs text-gray-500 mt-2">* 이 날짜를 기준으로 월별/연별 매출에 합산됩니다.</p>
           </div>
           
-          <div className="overflow-x-auto">
-            <table className="w-full mb-4 border-collapse min-w-[600px]">
+          <div className="overflow-x-auto w-full custom-scrollbar">
+            <table className="w-full mb-4 border-collapse min-w-[1000px]">
               <thead>
-                <tr className="bg-gray-100 text-left text-sm">
-                  <th className="p-2 border">품목 선택 (변경 시)</th>
-                  <th className="p-2 border">품명 (직접입력)</th>
-                  <th className="p-2 border w-24">수량</th>
-                  <th className="p-2 border w-32">단가</th>
-                  <th className="p-2 border text-center w-16">관리</th>
+                <tr className="bg-gray-100 text-left text-sm border-b-2 border-gray-300">
+                  <th className="p-3 border w-48 font-bold text-gray-700">품목 변경</th>
+                  <th className="p-3 border font-extrabold text-blue-700">품명 (직접수정)</th>
+                  <th className="p-3 border w-36 font-bold text-gray-700 text-center">규격 (*수량자동)</th>
+                  <th className="p-3 border w-24 font-bold text-gray-700 text-center">수량</th>
+                  <th className="p-3 border w-32 font-bold text-gray-700 text-center">단가</th>
+                  <th className="p-3 border text-center w-40 font-bold text-gray-700">관리</th>
                 </tr>
               </thead>
               <tbody>
                 {editItems.map((item, idx) => (
-                  <tr key={idx} className="text-sm">
+                  <tr key={idx} className="text-sm border-b border-gray-100 hover:bg-yellow-50/30 transition">
                     <td className="border p-2">
                       <select 
-                        className="w-full outline-none bg-transparent"
+                        className="w-full outline-none bg-white border border-gray-300 rounded p-2 font-bold text-gray-700"
                         value={item.product_id || ''}
                         onChange={(e) => handleProductSelect(idx, e.target.value)}
                       >
@@ -655,45 +729,43 @@ export default function InvoiceDetailPage() {
                       </select>
                     </td>
                     <td className="border p-2">
-                      <input type="text" className="w-full outline-none" 
+                      <input type="text" className="w-full outline-none bg-transparent font-bold p-1 focus:bg-yellow-50" 
                         value={item.name}
-                        onChange={(e) => {
-                          const newItems = [...editItems];
-                          newItems[idx].name = e.target.value;
-                          setEditItems(newItems);
-                        }}
+                        onChange={(e) => handleEditItemChange(idx, 'name', e.target.value)}
                       />
                     </td>
                     <td className="border p-2">
-                      <input type="number" className="w-full outline-none text-right" 
+                      <input type="text" className="w-full outline-none bg-transparent font-bold p-1 text-center focus:bg-yellow-50 text-gray-600" 
+                        value={item.spec}
+                        placeholder="예: 800M*5"
+                        onChange={(e) => handleEditItemChange(idx, 'spec', e.target.value)}
+                      />
+                    </td>
+                    <td className="border p-2">
+                      <input type="number" className="w-full outline-none bg-transparent font-bold p-1 text-center text-blue-700 focus:bg-yellow-50" 
                         value={item.qty === 0 ? '' : item.qty}
-                        onChange={(e) => {
-                          const newItems = [...editItems];
-                          newItems[idx].qty = Number(e.target.value);
-                          setEditItems(newItems);
-                        }}
+                        onChange={(e) => handleEditItemChange(idx, 'qty', Number(e.target.value))}
                       />
                     </td>
                     <td className="border p-2">
-                      <input type="number" className="w-full outline-none text-right" 
+                      <input type="number" className="w-full outline-none bg-transparent font-bold p-1 text-right text-gray-800 focus:bg-yellow-50" 
                         value={item.price === 0 ? '' : item.price}
-                        onChange={(e) => {
-                          const newItems = [...editItems];
-                          newItems[idx].price = Number(e.target.value);
-                          setEditItems(newItems);
-                        }}
+                        onChange={(e) => handleEditItemChange(idx, 'price', Number(e.target.value))}
                       />
                     </td>
-                    <td className="border p-2 text-center">
-                      <button onClick={() => removeEditItem(idx)} className="text-red-500 font-bold px-2 py-1 bg-red-50 rounded hover:bg-red-100">삭제</button>
+                    <td className="border p-2 text-center whitespace-nowrap">
+                      <div className="flex justify-center gap-1">
+                        <button onClick={() => saveAsProduct(item)} className="text-green-700 font-extrabold text-xs px-2 py-1.5 border border-green-300 rounded bg-green-50 hover:bg-green-100 shadow-sm transition">품목저장</button>
+                        <button onClick={() => removeEditItem(idx)} className="text-red-500 font-bold text-xs px-2 py-1.5 bg-red-50 border border-red-200 rounded hover:bg-red-100 shadow-sm transition">삭제</button>
+                      </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          <button onClick={addEditItem} className="w-full md:w-auto bg-gray-800 text-white px-6 py-3 md:py-2 rounded hover:bg-gray-700 transition font-bold text-sm">
-            + 품목 줄 추가
+          <button onClick={addEditItem} className="w-full md:w-auto bg-gray-800 text-white px-6 py-3 md:py-2.5 rounded-lg shadow hover:bg-gray-700 transition font-bold text-sm mt-2">
+            + 빈 품목 줄 추가
           </button>
         </div>
       ) : (
@@ -731,22 +803,22 @@ export default function InvoiceDetailPage() {
           </div>
 
           {attachments.length === 0 ? (
-            <p className="text-gray-500 text-sm py-4 text-center">등록된 첨부파일이 없습니다.</p>
+            <p className="text-gray-500 text-sm py-4 text-center font-bold">등록된 첨부파일이 없습니다.</p>
           ) : (
             <ul className="space-y-2">
               {attachments.map((file) => (
-                <li key={file.id} className="flex justify-between items-center bg-gray-50 p-3 rounded border border-gray-100">
+                <li key={file.id} className="flex justify-between items-center bg-gray-50 p-3 rounded border border-gray-200 hover:bg-gray-100 transition">
                   <a 
                     href={file.file_url} 
                     target="_blank" 
                     rel="noopener noreferrer" 
-                    className="text-blue-600 hover:text-blue-800 font-medium text-sm flex-1 truncate pr-4"
+                    className="text-blue-600 hover:text-blue-800 font-bold text-sm flex-1 truncate pr-4 flex items-center gap-2"
                   >
-                    📄 {file.file_name}
+                    <span>📄</span> {file.file_name}
                   </a>
                   <button 
                     onClick={() => handleDeleteFile(file.id, file.file_path)}
-                    className="text-red-500 hover:text-red-700 font-bold text-xs bg-white px-2 py-1 rounded border border-red-200"
+                    className="text-red-500 hover:text-red-700 font-bold text-xs bg-white px-3 py-1.5 rounded border border-red-200 shadow-sm transition"
                   >
                     삭제
                   </button>

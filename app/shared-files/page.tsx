@@ -10,6 +10,7 @@ interface Attachment {
   file_url: string;
   file_path: string;
   created_at: string;
+  is_important?: boolean;
 }
 
 export default function SharedFilesPage() {
@@ -18,9 +19,15 @@ export default function SharedFilesPage() {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [loading, setLoading] = useState(true);
-
-  // === 신규 추가: 파일 검색 상태 ===
   const [searchTerm, setSearchTerm] = useState('');
+
+  const [alertModal, setAlertModal] = useState({ isOpen: false, title: '', desc: '', confirmColor: 'bg-blue-600 hover:bg-blue-700', onConfirm: () => {} });
+  
+  const closeAlert = () => setAlertModal(prev => ({ ...prev, isOpen: false }));
+  
+  const showAlert = (title: string, desc: string, confirmColor = 'bg-blue-600 hover:bg-blue-700') => {
+    setAlertModal({ isOpen: true, title, desc, confirmColor, onConfirm: closeAlert });
+  };
 
   const fetchSharedFiles = async () => {
     try {
@@ -55,6 +62,7 @@ export default function SharedFilesPage() {
 
   useEffect(() => {
     fetchSharedFiles();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -79,23 +87,39 @@ export default function SharedFilesPage() {
         company_id: profile!.company_id,
         file_name: file.name,
         file_path: filePath,
-        file_url: urlData.publicUrl
+        file_url: urlData.publicUrl,
+        is_important: false
       }]);
 
       if (dbError) throw dbError;
       
       fetchSharedFiles();
-      alert('공용 문서가 성공적으로 등록되었습니다.');
+      showAlert('등록 완료', '공용 문서가 성공적으로 등록되었습니다.', 'bg-green-600 hover:bg-green-700');
 
     } catch (error: any) {
-      alert('파일 업로드에 실패했습니다.');
+      showAlert('업로드 실패', '파일 업로드에 실패했습니다.', 'bg-red-600 hover:bg-red-700');
     } finally {
       setIsUploading(false);
       e.target.value = '';
     }
   };
 
-  const handleDeleteFile = async (id: string, filePath: string) => {
+  const toggleImportant = async (id: string, currentStatus: boolean) => {
+    try {
+      const { error } = await supabase.from('attachments').update({ is_important: !currentStatus }).eq('id', id);
+      if (error) throw error;
+      
+      fetchSharedFiles();
+    } catch (error) {
+      showAlert('오류', '중요 상태 변경에 실패했습니다.', 'bg-red-600 hover:bg-red-700');
+    }
+  };
+
+  const handleDeleteFile = async (id: string, filePath: string, isImportant: boolean) => {
+    if (isImportant) {
+      return showAlert('삭제 불가', '중요(⭐) 표시된 파일은 삭제할 수 없습니다.\n삭제를 원하시면 먼저 별표를 해제해주세요.', 'bg-yellow-500 hover:bg-yellow-600');
+    }
+
     if (!window.confirm('이 공용 문서를 삭제하시겠습니까?')) return;
     try {
       await supabase.storage.from('attachments').remove([filePath]);
@@ -103,18 +127,36 @@ export default function SharedFilesPage() {
       if (error) throw error;
       fetchSharedFiles();
     } catch (error) {
-      alert('삭제에 실패했습니다.');
+      showAlert('삭제 실패', '파일 삭제에 실패했습니다.', 'bg-red-600 hover:bg-red-700');
     }
   };
 
-  // === 파일 검색 필터 로직 ===
-  const filteredAttachments = attachments.filter(file => 
-    file.file_name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredAttachments = attachments
+    .filter(file => file.file_name.toLowerCase().includes(searchTerm.toLowerCase()))
+    .sort((a, b) => {
+      if (a.is_important && !b.is_important) return -1;
+      if (!a.is_important && b.is_important) return 1;
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime(); 
+    });
 
   return (
     <div className="min-h-screen bg-gray-50 p-4 md:p-8 text-black relative">
       
+      {alertModal.isOpen && (
+        <div className="fixed inset-0 z-[100] flex items-start justify-center pt-20 p-4">
+          <div className="absolute inset-0 bg-gray-900/20 backdrop-blur-[2px]" onClick={closeAlert}></div>
+          <div className="relative bg-white rounded-2xl shadow-2xl border border-gray-200 p-6 w-full max-w-sm animate-fade-in-up z-10">
+            <h3 className="text-xl font-extrabold text-gray-900 mb-2">{alertModal.title}</h3>
+            <p className="text-gray-600 mb-6 whitespace-pre-line text-sm font-medium leading-relaxed">{alertModal.desc}</p>
+            <div className="flex justify-end">
+              <button onClick={alertModal.onConfirm} className={`px-5 py-2 rounded-lg font-bold text-white cursor-pointer transition shadow-md ${alertModal.confirmColor}`}>
+                확인
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <style dangerouslySetInnerHTML={{
         __html: `
           @keyframes fadeInUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
@@ -122,19 +164,16 @@ export default function SharedFilesPage() {
         `
       }} />
 
-      {/* === 레이아웃 확장 및 좌우 분할 구조 적용 === */}
       <div className="max-w-[95%] xl:max-w-[1600px] mx-auto flex flex-col lg:flex-row gap-6">
         
-        {/* === 좌측 패널: 컨트롤 박스 === */}
         <div className="w-full lg:w-1/4 space-y-4 shrink-0">
-          <div className="bg-white p-5 md:p-6 shadow-lg rounded-lg border-t-4 border-blue-600 sticky top-6">
+          <div className="bg-white p-5 md:p-6 shadow-lg rounded-lg border-t-4 border-blue-600 lg:sticky lg:top-6">
             <div className="mb-4 border-b pb-4">
               <h1 className="text-xl md:text-2xl font-extrabold">공용 자료실</h1>
               <p className="text-gray-500 text-sm mt-1 font-bold">사내 공용 문서 보관 및 관리</p>
             </div>
             
             <div className="space-y-4">
-              {/* 업로드 버튼 */}
               <label className={`w-full block text-center cursor-pointer whitespace-nowrap bg-blue-600 text-white hover:bg-blue-700 font-bold py-3 px-6 rounded-lg shadow-md transition ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
                 <span>{isUploading ? '업로드 중...' : '+ 새 공용 문서 등록'}</span>
                 <input type="file" className="hidden" onChange={handleFileUpload} disabled={isUploading} />
@@ -142,7 +181,6 @@ export default function SharedFilesPage() {
 
               <div className="h-px bg-gray-200 my-4"></div>
 
-              {/* 검색창 */}
               <div>
                 <label className="block text-sm font-bold text-gray-700 mb-1">문서 검색</label>
                 <div className="relative">
@@ -158,19 +196,21 @@ export default function SharedFilesPage() {
               </div>
               
               <div className="bg-blue-50 border border-blue-100 p-4 rounded-lg mt-4">
-                <p className="text-xs text-blue-800 font-bold leading-relaxed">
-                  * 사업자등록증, 통장사본, 제품 카탈로그 등 전 직원이 자주 사용하는 문서를 이곳에 보관하세요.
+                <p className="text-xs text-blue-800 font-bold leading-relaxed mb-2">
+                  * 사업자등록증, 통장사본, 제품 카탈로그 등 전 직원이 자주 사용하는 문서를 보관하세요.
+                </p>
+                <p className="text-xs text-yellow-700 font-extrabold leading-relaxed bg-yellow-50 p-2 rounded border border-yellow-200">
+                  ⭐ 중요 표시된 문서는 최상단에 고정되며 삭제가 불가능해집니다.
                 </p>
               </div>
             </div>
           </div>
         </div>
 
-        {/* === 우측 패널: 데이터 뷰 (리스트 형태) === */}
         <div className="w-full lg:w-3/4 flex flex-col gap-6 overflow-hidden">
           
           <div className="bg-white p-4 md:p-6 shadow-lg rounded-xl flex-grow min-h-[500px]">
-            <div className="mb-4 flex justify-between items-end">
+            <div className="mb-4 flex justify-between items-end border-b border-dashed pb-3">
               <h2 className="text-lg font-extrabold text-gray-800">문서 목록 <span className="text-blue-600 text-sm ml-1">총 {filteredAttachments.length}건</span></h2>
             </div>
 
@@ -187,36 +227,51 @@ export default function SharedFilesPage() {
                 <table className="w-full border-collapse min-w-[700px]">
                   <thead>
                     <tr className="bg-gray-100 text-left text-sm border-b-2 border-gray-300">
-                      <th className="p-3 w-16 text-center font-bold text-gray-700">No</th>
+                      <th className="p-3 w-16 text-center font-bold text-gray-700">중요</th>
                       <th className="p-3 font-extrabold text-blue-700">파일명</th>
                       <th className="p-3 w-40 text-center font-bold text-gray-700">등록일자</th>
                       <th className="p-3 w-32 text-center font-bold text-gray-700">관리</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredAttachments.map((file, idx) => (
-                      <tr key={file.id} className="border-b hover:bg-blue-50 transition text-sm">
-                        <td className="p-3 text-center text-gray-400 font-bold">{idx + 1}</td>
+                    {filteredAttachments.map((file) => (
+                      <tr key={file.id} className={`border-b transition text-sm ${file.is_important ? 'bg-yellow-50/30 hover:bg-yellow-50' : 'hover:bg-blue-50'}`}>
+                        <td className="p-3 text-center align-middle">
+                          {/* === 수정 포인트: cursor-pointer 추가로 마우스 손가락 모양 활성화 === */}
+                          <button 
+                            onClick={() => toggleImportant(file.id, file.is_important || false)}
+                            className={`cursor-pointer text-2xl transition-transform hover:scale-125 ${file.is_important ? 'text-yellow-500' : 'text-gray-300 hover:text-yellow-500'}`}
+                            title={file.is_important ? "중요 해제" : "중요 설정 (상단 고정 및 삭제 방지)"}
+                          >
+                            {file.is_important ? '⭐' : '☆'}
+                          </button>
+                        </td>
+                        
                         <td className="p-3 font-extrabold text-gray-900 truncate max-w-[300px] lg:max-w-[500px]" title={file.file_name}>
-                          <a href={file.file_url} target="_blank" rel="noopener noreferrer" className="hover:text-blue-600 transition flex items-center gap-2">
-                            <span className="text-lg">📄</span> {file.file_name}
+                          <a href={file.file_url} target="_blank" rel="noopener noreferrer" className="cursor-pointer hover:text-blue-600 transition flex items-center gap-2">
+                            <span className="text-lg">📄</span> 
+                            {file.file_name}
+                            {file.is_important && <span className="ml-2 text-[10px] bg-yellow-100 text-yellow-700 border border-yellow-300 px-1.5 py-0.5 rounded font-extrabold">중요</span>}
                           </a>
                         </td>
+                        
                         <td className="p-3 text-center font-bold text-gray-500">
                           {new Date(file.created_at).toLocaleDateString()}
                         </td>
+                        
                         <td className="p-3 text-center space-x-2 whitespace-nowrap">
                           <a 
                             href={file.file_url} 
                             target="_blank" 
                             rel="noopener noreferrer" 
-                            className="inline-block text-blue-600 font-bold px-3 py-1.5 bg-white border border-blue-200 rounded hover:bg-blue-50 text-xs shadow-sm"
+                            className="cursor-pointer inline-block text-blue-600 font-bold px-3 py-1.5 bg-white border border-blue-200 rounded hover:bg-blue-50 text-xs shadow-sm"
                           >
                             열기
                           </a>
                           <button 
-                            onClick={() => handleDeleteFile(file.id, file.file_path)} 
-                            className="inline-block text-red-500 font-bold px-3 py-1.5 bg-white border border-red-200 rounded hover:bg-red-50 text-xs shadow-sm"
+                            onClick={() => handleDeleteFile(file.id, file.file_path, file.is_important || false)} 
+                            className={`inline-block font-bold px-3 py-1.5 bg-white border rounded text-xs shadow-sm transition ${file.is_important ? 'text-gray-400 border-gray-200 hover:bg-gray-100 cursor-not-allowed' : 'cursor-pointer text-red-500 border-red-200 hover:bg-red-50'}`}
+                            title={file.is_important ? "중요 파일은 삭제할 수 없습니다." : "파일 삭제"}
                           >
                             삭제
                           </button>

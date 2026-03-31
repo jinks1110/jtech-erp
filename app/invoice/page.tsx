@@ -30,7 +30,6 @@ export default function InvoicePage() {
   ]);
 
   const [confirmModal, setConfirmModal] = useState({ isOpen: false, title: '', desc: '', confirmText: '확인', confirmColor: 'bg-blue-600 hover:bg-blue-700', onConfirm: () => {} });
-
   const closeModal = () => setConfirmModal(prev => ({ ...prev, isOpen: false }));
   const showAlert = (title: string, desc: string, onConfirm = closeModal) => { setConfirmModal({ isOpen: true, title, desc, confirmText: '확인', confirmColor: 'bg-blue-600 hover:bg-blue-700', onConfirm }); };
 
@@ -71,6 +70,7 @@ export default function InvoicePage() {
   const copyItemRow = (index: number) => { const itemToCopy = items[index]; const newItems = [...items]; newItems.splice(index + 1, 0, { ...itemToCopy, id: Date.now().toString() }); setItems(newItems); };
   const removeItemRow = (id: string) => { if (items.length === 1) return setItems([{ id: Date.now().toString(), product_id: '', name: '', spec: '', qty: 0, price: 0, is_vat_included: false }]); setItems(items.filter(item => item.id !== id)); };
 
+  // === 핵심 기능 1: 규격에 *5 입력 시 수량 자동 인식 ===
   const handleItemChange = (index: number, field: keyof InvoiceItem, value: string | number | boolean) => {
     const newItems = [...items];
     if (field === 'product_id') {
@@ -79,10 +79,49 @@ export default function InvoicePage() {
         const selectedProd = products.find(p => p.id === value);
         if (selectedProd) { newItems[index] = { ...newItems[index], product_id: selectedProd.id, name: selectedProd.name, spec: selectedProd.spec || '', price: selectedProd.price, is_vat_included: selectedProd.is_vat_included }; }
       }
+    } else if (field === 'spec') {
+      const specValue = value as string;
+      newItems[index].spec = specValue;
+      // 정규식으로 *숫자 또는 x숫자 패턴을 찾아 수량에 자동 적용
+      const match = specValue.match(/[xX*]\s*(\d+)\s*$/);
+      if (match && match[1]) {
+        newItems[index].qty = parseInt(match[1], 10);
+      }
     } else {
       newItems[index] = { ...newItems[index], [field]: value };
     }
     setItems(newItems);
+  };
+
+  // === 핵심 기능 2: 작성 중인 품목을 DB에 영구 저장 ===
+  const saveAsProduct = async (index: number) => {
+    const item = items[index];
+    if (!selectedClient) return showAlert('알림', '거래처를 먼저 선택해주세요.');
+    if (!item.name.trim()) return showAlert('알림', '품명을 입력해야 등록할 수 있습니다.');
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const { data: profile } = await supabase.from('profiles').select('company_id').eq('id', session!.user.id).single();
+
+      const { error } = await supabase.from('products').insert([{
+        company_id: profile!.company_id,
+        client_id: selectedClient.id,
+        name: item.name,
+        spec: item.spec || '',
+        price: item.price || 0,
+        is_vat_included: item.is_vat_included || false,
+        is_active: true
+      }]);
+
+      if (error) throw error;
+      
+      const { data: productsData } = await supabase.from('products').select('*').eq('company_id', profile!.company_id).eq('is_active', true).order('name');
+      if (productsData) setProducts(productsData);
+
+      showAlert('저장 완료', `'${item.name}' 품목이 자주 쓰는 품목으로 등록되었습니다!`);
+    } catch (error: any) {
+      showAlert('오류', '품목 등록에 실패했습니다.');
+    }
   };
 
   let supplyTotal = 0; let vatTotal = 0;
@@ -142,81 +181,6 @@ export default function InvoicePage() {
   return (
     <div className="w-full overflow-x-hidden min-h-screen bg-gray-50 p-2 pt-16 lg:p-4 lg:pt-8 text-black relative">
       
-      {/* 알림 모달 */}
-      {confirmModal.isOpen && (
-        <div className="fixed inset-0 z-[100] flex items-start justify-center pt-20 p-4">
-          <div className="absolute inset-0 bg-gray-900/10 backdrop-blur-[2px]" onClick={closeModal}></div>
-          <div className="relative bg-white rounded-2xl shadow-2xl border border-gray-200 p-6 w-full max-w-sm animate-fade-in-up z-10">
-            <h3 className="text-xl font-extrabold text-gray-900 mb-2">{confirmModal.title}</h3>
-            <p className="text-gray-600 mb-6 font-medium text-sm whitespace-pre-line">{confirmModal.desc}</p>
-            <div className="flex justify-end"><button onClick={confirmModal.onConfirm} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-5 rounded-lg shadow-md transition">확인</button></div>
-          </div>
-        </div>
-      )}
-
-      {/* === 절대 무시 못하는 강제 인라인 스타일 모달 (명세서 블루 테마) === */}
-      {isClientModalOpen && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 sm:p-6">
-          <div className="absolute inset-0 bg-gray-900/60 backdrop-blur-sm" onClick={() => setIsClientModalOpen(false)}></div>
-          
-          {/* 강제 높이 지정 (style 적용) + overflow-hidden */}
-          <div 
-            className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl flex flex-col z-10 border-2 border-blue-600 overflow-hidden animate-fade-in-up"
-            style={{ height: '70vh', maxHeight: '700px' }} // 브라우저가 무조건 높이를 자름
-          >
-            {/* 고정 헤더 */}
-            <div className="p-4 border-b flex justify-between items-center bg-gray-50 shrink-0">
-               <h3 className="text-lg font-extrabold text-blue-900 flex items-center gap-2"><span>🏢</span> 거래처 선택</h3>
-               <button onClick={() => setIsClientModalOpen(false)} className="text-gray-400 hover:text-red-500 font-bold text-3xl leading-none">&times;</button>
-            </div>
-            
-            {/* 고정 검색창 */}
-            <div className="p-4 border-b shrink-0 bg-white">
-               <div className="relative">
-                 <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400">🔍</span>
-                 <input 
-                   type="text" 
-                   placeholder="상호명을 검색하세요..." 
-                   className="w-full pl-10 pr-4 py-2.5 border-2 border-blue-200 rounded-lg outline-none focus:border-blue-600 font-bold text-gray-800 text-sm" 
-                   value={modalSearchTerm} 
-                   onChange={e => setModalSearchTerm(e.target.value)} 
-                   autoFocus 
-                 />
-               </div>
-            </div>
-            
-            {/* 강제 스크롤 영역 (style 적용) */}
-            <div 
-              className="flex-1 p-4 bg-gray-50 custom-scrollbar"
-              style={{ overflowY: 'auto', minHeight: 0 }} // 브라우저가 무조건 세로 스크롤을 만들게 강제함
-            >
-               <div className="flex flex-col gap-2">
-                 {clients.filter(c => c.name.toLowerCase().includes(modalSearchTerm.toLowerCase())).map(client => (
-                   <button 
-                     key={client.id} 
-                     onClick={() => handleClientSelect(client)} 
-                     className="text-left p-3 border border-gray-200 rounded-lg bg-white hover:bg-blue-50 hover:border-blue-400 transition shadow-sm group flex justify-between items-center"
-                   >
-                     <div>
-                       <div className="font-extrabold text-gray-900 group-hover:text-blue-800 text-base mb-1">{client.name}</div>
-                       <div className="text-xs text-gray-500 font-medium">
-                         사업자: {client.business_number || '-'} | 대표: {client.ceo_name || '-'}
-                       </div>
-                     </div>
-                     <span className="shrink-0 bg-gray-100 text-gray-500 group-hover:bg-blue-600 group-hover:text-white px-3 py-1.5 rounded-md text-xs font-bold transition">선택</span>
-                   </button>
-                 ))}
-                 {clients.filter(c => c.name.toLowerCase().includes(modalSearchTerm.toLowerCase())).length === 0 && (
-                   <div className="text-center py-10 text-gray-400 font-bold border-2 border-dashed border-gray-200 rounded-lg">
-                     검색된 거래처가 없습니다.
-                   </div>
-                 )}
-               </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       <style dangerouslySetInnerHTML={{ __html: `
         @keyframes fadeInUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } } 
         .animate-fade-in-up { animation: fadeInUp 0.2s ease-out forwards; }
@@ -233,10 +197,7 @@ export default function InvoicePage() {
             <div>
               <label className="block text-sm font-bold text-gray-700 mb-2">1. 거래처 선택</label>
               {!selectedClient ? (
-                <button 
-                  onClick={() => setIsClientModalOpen(true)} 
-                  className="w-full bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-300 border-dashed py-4 rounded-xl font-extrabold flex items-center justify-center gap-2 transition shadow-sm hover:shadow"
-                >
+                <button onClick={() => setIsClientModalOpen(true)} className="w-full bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-300 border-dashed py-4 rounded-xl font-extrabold flex items-center justify-center gap-2 transition shadow-sm hover:shadow">
                   <span className="text-xl">🔍</span> 거래처 검색 및 선택하기
                 </button>
               ) : (
@@ -257,7 +218,7 @@ export default function InvoicePage() {
                 <label className="block text-sm font-bold text-gray-700">2. 작성 일자</label>
                 <input type="date" value={invoiceDate} onChange={(e) => { setInvoiceDate(e.target.value); setCalendarMonth(new Date(e.target.value)); }} className="border border-gray-300 rounded px-2 py-1 text-sm font-bold outline-none focus:border-blue-500 text-blue-700"/>
               </div>
-              <div className="bg-gray-50 rounded-xl p-4 border border-gray-200 shadow-inner">
+              <div className="bg-gray-50 rounded-xl p-4 border border-gray-200 shadow-inner relative z-0">
                 <div className="flex justify-between items-center mb-4">
                   <button onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))} className="p-2 font-bold text-gray-500 hover:text-blue-600 hover:bg-white rounded-lg">&lt;</button>
                   <span className="font-extrabold text-blue-900 text-lg">{calendarMonth.getFullYear()}년 {calendarMonth.getMonth() + 1}월</span>
@@ -270,7 +231,7 @@ export default function InvoicePage() {
                     const currentDateStr = `${calendarMonth.getFullYear()}-${String(calendarMonth.getMonth() + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
                     const isSelected = currentDateStr === invoiceDate;
                     const isToday = currentDateStr === getTodayKST();
-                    return (<button key={d} onClick={() => setInvoiceDate(currentDateStr)} className={`py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm font-extrabold ${isSelected ? 'bg-blue-600 text-white shadow-md transform scale-105' : isToday ? 'bg-blue-100 text-blue-800 border border-blue-300' : 'text-gray-700 hover:bg-gray-200'}`}>{d}</button>)
+                    return (<button key={d} onClick={() => setInvoiceDate(currentDateStr)} className={`py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm font-extrabold ${isSelected ? 'bg-blue-600 text-white shadow-md transform scale-105 z-10 relative' : isToday ? 'bg-blue-100 text-blue-800 border border-blue-300' : 'text-gray-700 hover:bg-gray-200'}`}>{d}</button>)
                   })}
                 </div>
               </div>
@@ -288,22 +249,22 @@ export default function InvoicePage() {
           </div>
 
           <div className="bg-white p-3 sm:p-6 shadow-lg rounded-xl flex-grow flex flex-col min-w-0">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-2 border-b border-dashed pb-3">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-2">
               <h2 className="text-base sm:text-lg font-extrabold text-gray-800">3. 품목 입력</h2>
               <span className="text-xs sm:text-sm font-bold text-blue-700 bg-blue-50 px-3 py-1 rounded-full border border-blue-200">일자: {invoiceDate}</span>
             </div>
             
             <div className="hidden lg:block w-full overflow-x-auto border border-gray-200 rounded-lg mb-4 bg-white">
-              <table className="w-full min-w-[900px] border-collapse text-sm">
+              <table className="w-full min-w-[1000px] border-collapse text-sm">
                 <thead>
                   <tr className="bg-gray-100 text-left border-b-2 border-gray-300">
                     <th className="p-3 font-bold w-48 border-r text-gray-800">품목 불러오기</th>
                     <th className="p-3 font-bold border-r text-blue-700">품명 (직접입력)</th>
-                    <th className="p-3 font-bold w-32 border-r text-center text-gray-800">규격</th>
+                    <th className="p-3 font-bold w-32 border-r text-center text-gray-800">규격 (수량 자동인식)</th>
                     <th className="p-3 font-bold w-20 border-r text-center text-gray-800">수량</th>
                     <th className="p-3 font-bold w-28 border-r text-center text-gray-800">단가</th>
                     <th className="p-3 font-bold w-32 border-r text-right text-gray-800 pr-4">금액</th>
-                    <th className="p-3 font-bold w-28 text-center text-gray-800">관리</th>
+                    <th className="p-3 font-bold w-40 text-center text-gray-800">관리</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -311,12 +272,13 @@ export default function InvoicePage() {
                     <tr key={item.id} className="border-b border-gray-200 hover:bg-gray-50 transition">
                       <td className="p-2 border-r"><select value={item.product_id} onChange={(e) => handleItemChange(index, 'product_id', e.target.value)} className="w-full p-2 border border-gray-300 rounded outline-none focus:border-blue-500 font-bold bg-white text-gray-700"><option value="">직접 입력</option>{!selectedClient ? (<option value="disabled" disabled>선택 불가</option>) : (filteredProducts.map(prod => (<option key={prod.id} value={prod.id}>{prod.name}</option>)))}</select></td>
                       <td className="p-2 border-r"><input type="text" value={item.name} onChange={(e) => handleItemChange(index, 'name', e.target.value)} placeholder="품명 직접 타자" className="w-full p-2 outline-none font-bold bg-transparent focus:bg-blue-50 rounded" /></td>
-                      <td className="p-2 border-r"><input type="text" value={item.spec || ''} onChange={(e) => handleItemChange(index, 'spec', e.target.value)} placeholder="규격" className="w-full p-2 outline-none font-bold text-center text-gray-700 bg-transparent focus:bg-blue-50 rounded" /></td>
+                      <td className="p-2 border-r"><input type="text" value={item.spec || ''} onChange={(e) => handleItemChange(index, 'spec', e.target.value)} placeholder="예: 8000M*5" className="w-full p-2 outline-none font-bold text-center text-gray-700 bg-transparent focus:bg-blue-50 rounded" /></td>
                       <td className="p-2 border-r"><input type="number" min="0" value={item.qty === 0 ? '' : item.qty} onChange={(e) => handleItemChange(index, 'qty', Number(e.target.value))} className="w-full p-2 outline-none font-bold text-center text-blue-700 bg-transparent focus:bg-blue-50 rounded" /></td>
                       <td className="p-2 border-r"><input type="number" min="0" value={item.price === 0 ? '' : item.price} onChange={(e) => handleItemChange(index, 'price', Number(e.target.value))} className="w-full p-2 outline-none font-bold text-right text-gray-700 bg-transparent focus:bg-blue-50 rounded" /></td>
                       <td className="p-2 border-r text-right font-extrabold text-gray-800 align-middle pr-4">{(item.qty * item.price).toLocaleString()}</td>
                       <td className="p-2 text-center align-middle whitespace-nowrap">
                         <div className="flex items-center justify-center gap-1">
+                          <button onClick={() => saveAsProduct(index)} className="text-green-600 font-bold text-xs px-2 py-1 border border-green-200 rounded hover:bg-green-50 transition">품목저장</button>
                           <button onClick={() => copyItemRow(index)} className="text-purple-600 font-bold text-xs px-2 py-1 border border-purple-200 rounded hover:bg-purple-50 transition">복사</button>
                           <button onClick={() => removeItemRow(item.id)} className="text-red-500 font-bold text-xs px-2 py-1 border border-red-200 rounded hover:bg-red-50 transition">삭제</button>
                         </div>
@@ -333,6 +295,7 @@ export default function InvoicePage() {
                   <div className="flex justify-between items-center mb-3 pb-2 border-b border-gray-100">
                     <span className="font-extrabold text-blue-800 bg-blue-100 px-2 py-1 rounded text-xs">품목 {index + 1}</span>
                     <div className="flex gap-2">
+                      <button onClick={() => saveAsProduct(index)} className="text-xs bg-green-50 text-green-600 px-2 py-1.5 rounded font-bold border border-green-200">품목저장</button>
                       <button onClick={() => copyItemRow(index)} className="text-xs bg-purple-50 text-purple-600 px-2 py-1.5 rounded font-bold border border-purple-200">복사</button>
                       <button onClick={() => removeItemRow(item.id)} className="text-xs bg-red-50 text-red-600 px-2 py-1.5 rounded font-bold border border-red-200">삭제</button>
                     </div>
@@ -351,8 +314,8 @@ export default function InvoicePage() {
                     </div>
                     <div className="flex gap-2">
                       <div className="w-1/2">
-                        <label className="block text-xs font-bold text-gray-600 mb-1">규격</label>
-                        <input type="text" value={item.spec || ''} onChange={(e) => handleItemChange(index, 'spec', e.target.value)} placeholder="규격 입력" className="w-full p-2 border border-gray-300 outline-none font-bold text-sm bg-white rounded-lg focus:border-blue-500" />
+                        <label className="block text-xs font-bold text-gray-600 mb-1">규격 (*수량 자동인식)</label>
+                        <input type="text" value={item.spec || ''} onChange={(e) => handleItemChange(index, 'spec', e.target.value)} placeholder="예: 800M*5" className="w-full p-2 border border-gray-300 outline-none font-bold text-sm bg-white rounded-lg focus:border-blue-500" />
                       </div>
                       <div className="w-1/2">
                         <label className="block text-xs font-bold text-gray-600 mb-1">수량</label>
@@ -379,8 +342,58 @@ export default function InvoicePage() {
 
           </div>
         </div>
-
       </div>
+
+      {/* === 달력 충돌 원천 차단: 모달을 DOM 제일 마지막에 배치 === */}
+      {confirmModal.isOpen && (
+        <div className="fixed inset-0 z-[100] flex items-start justify-center pt-20 p-4">
+          <div className="absolute inset-0 bg-gray-900/10 backdrop-blur-[2px]" onClick={closeModal}></div>
+          <div className="relative bg-white rounded-2xl shadow-2xl border border-gray-200 p-6 w-full max-w-sm animate-fade-in-up z-10">
+            <h3 className="text-xl font-extrabold text-gray-900 mb-2">{confirmModal.title}</h3>
+            <p className="text-gray-600 mb-6 font-medium text-sm whitespace-pre-line">{confirmModal.desc}</p>
+            <div className="flex justify-end"><button onClick={confirmModal.onConfirm} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-5 rounded-lg shadow-md transition">확인</button></div>
+          </div>
+        </div>
+      )}
+
+      {isClientModalOpen && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 sm:p-6">
+          <div className="absolute inset-0 bg-gray-900/60 backdrop-blur-sm" onClick={() => setIsClientModalOpen(false)}></div>
+          <div 
+            className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl flex flex-col z-10 border-2 border-blue-600 overflow-hidden animate-fade-in-up"
+            style={{ height: '70vh', maxHeight: '700px' }}
+          >
+            <div className="p-4 border-b flex justify-between items-center bg-gray-50 shrink-0">
+               <h3 className="text-lg font-extrabold text-blue-900 flex items-center gap-2"><span>🏢</span> 거래처 선택</h3>
+               <button onClick={() => setIsClientModalOpen(false)} className="text-gray-400 hover:text-red-500 font-bold text-3xl leading-none">&times;</button>
+            </div>
+            
+            <div className="p-4 border-b shrink-0 bg-white">
+               <div className="relative">
+                 <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400">🔍</span>
+                 <input type="text" placeholder="상호명을 검색하세요..." className="w-full pl-10 pr-4 py-2.5 border-2 border-blue-200 rounded-lg outline-none focus:border-blue-600 font-bold text-gray-800 text-sm md:text-base" value={modalSearchTerm} onChange={e => setModalSearchTerm(e.target.value)} autoFocus />
+               </div>
+            </div>
+            
+            <div className="flex-1 p-4 bg-gray-50 custom-scrollbar" style={{ overflowY: 'auto', minHeight: 0 }}>
+               <div className="flex flex-col gap-2">
+                 {clients.filter(c => c.name.toLowerCase().includes(modalSearchTerm.toLowerCase())).map(client => (
+                   <button key={client.id} onClick={() => handleClientSelect(client)} className="text-left p-3 border border-gray-200 rounded-lg bg-white hover:bg-blue-50 hover:border-blue-400 transition shadow-sm group flex justify-between items-center">
+                     <div>
+                       <div className="font-extrabold text-gray-900 group-hover:text-blue-800 text-base mb-1">{client.name}</div>
+                       <div className="text-xs text-gray-500 font-medium">사업자: {client.business_number || '-'} | 대표: {client.ceo_name || '-'}</div>
+                     </div>
+                     <span className="shrink-0 bg-gray-100 text-gray-500 group-hover:bg-blue-600 group-hover:text-white px-3 py-1.5 rounded-md text-xs font-bold transition">선택</span>
+                   </button>
+                 ))}
+                 {clients.filter(c => c.name.toLowerCase().includes(modalSearchTerm.toLowerCase())).length === 0 && (
+                   <div className="text-center py-10 text-gray-400 font-bold border-2 border-dashed border-gray-200 rounded-lg">검색된 거래처가 없습니다.</div>
+                 )}
+               </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
